@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$HOME/.hermes-local/hermes-agent-venv"
+
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  echo "Hermes venv not found at $VENV_DIR" >&2
+  echo "Ask Codex to reinstall Hermes runtime dependencies." >&2
+  exit 1
+fi
+
+exec env PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+  "$VENV_DIR/bin/python" -m hermes_cli.main "$@"
