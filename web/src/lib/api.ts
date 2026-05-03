@@ -124,6 +124,16 @@ export const api = {
 
   // Skills & Toolsets
   getSkills: () => fetchJSON<SkillInfo[]>("/api/skills"),
+  getSkillHub: (page = 1, page_size = 20, source = "all") =>
+    fetchJSON<SkillHubResponse>(
+      `/api/skills/hub?page=${page}&page_size=${page_size}&source=${encodeURIComponent(source)}`,
+    ),
+  installSkill: (body: { identifier: string; category?: string; force?: boolean }) =>
+    fetchJSON<{ ok: boolean; log: string[] }>("/api/skills/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   toggleSkill: (name: string, enabled: boolean) =>
     fetchJSON<{ ok: boolean }>("/api/skills/toggle", {
       method: "PUT",
@@ -131,6 +141,22 @@ export const api = {
       body: JSON.stringify({ name, enabled }),
     }),
   getToolsets: () => fetchJSON<ToolsetInfo[]>("/api/tools/toolsets"),
+  toggleToolset: (name: string, enabled: boolean) =>
+    fetchJSON<{ ok: boolean }>("/api/tools/toolsets/toggle", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, enabled }),
+    }),
+
+  // Profiles / project bots
+  getProfiles: () => fetchJSON<ProfilesResponse>("/api/profiles"),
+  getProjectBots: () => fetchJSON<ProjectBotsResponse>("/api/project-bots"),
+  provisionProjectBot: (body: ProjectBotProvisionRequest) =>
+    fetchJSON<ProjectBotProvisionResponse>("/api/project-bots/provision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 
   // Session search (FTS5)
   searchSessions: (q: string) =>
@@ -391,6 +417,20 @@ export interface SkillInfo {
   enabled: boolean;
 }
 
+export interface SkillHubItem {
+  name: string;
+  description: string;
+  source: string;
+  trust: string;
+}
+
+export interface SkillHubResponse {
+  items: SkillHubItem[];
+  page: number;
+  total_pages: number;
+  total: number;
+}
+
 export interface ToolsetInfo {
   name: string;
   label: string;
@@ -398,6 +438,83 @@ export interface ToolsetInfo {
   enabled: boolean;
   configured: boolean;
   tools: string[];
+}
+
+export interface ProfileInfo {
+  name: string;
+  path: string;
+  is_default: boolean;
+  model: string | null;
+  provider: string | null;
+  gateway_running: boolean;
+  skill_count: number;
+  active: boolean;
+}
+
+export interface ProfilesResponse {
+  active: string;
+  profiles: ProfileInfo[];
+}
+
+export interface ProjectBotInfo {
+  project_name: string;
+  profile_slug: string;
+  platform: string;
+  mode: string;
+  profile_path: string;
+  gateway_running: boolean;
+  skill_count: number;
+  updated_at?: string;
+  discord_invite_url?: string;
+  callback_url?: string;
+}
+
+export interface ProjectBotsResponse {
+  projects: ProjectBotInfo[];
+}
+
+export interface ProjectBotProvisionRequest {
+  platform: "discord" | "weixin" | "wecom" | "wecom_callback";
+  project_name: string;
+  profile_slug?: string;
+  skills?: string[];
+  reuse_profile?: boolean;
+  clone_config?: boolean;
+  alias?: boolean;
+  dry_run?: boolean;
+  no_start?: boolean;
+  client_id?: string;
+  application_id?: string;
+  bot_token?: string;
+  bot_id?: string;
+  secret?: string;
+  corp_id?: string;
+  corp_secret?: string;
+  agent_id?: string;
+  callback_token?: string;
+  encoding_aes_key?: string;
+  domain?: string;
+  port?: number;
+  account_id?: string;
+  token?: string;
+  allowed_users?: string[];
+  home_channel?: string;
+  permissions?: number;
+}
+
+export interface ProjectBotProvisionResponse {
+  ok: boolean;
+  project_name: string;
+  profile_slug: string;
+  platform: string;
+  profile_dir: string;
+  dry_run: boolean;
+  env_keys: string[];
+  invite_url?: string | null;
+  callback_url?: string | null;
+  gateway_started: boolean;
+  gateway_status: string;
+  next_actions: string[];
 }
 
 export interface SessionSearchResult {

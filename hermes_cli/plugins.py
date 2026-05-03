@@ -73,6 +73,91 @@ VALID_HOOKS: Set[str] = {
     "subagent_stop",
 }
 
+
+def discover_plugin_cli_commands() -> List[dict]:
+    """Return CLI commands exposed by general plugins.
+
+    This is a lightweight argparse-time discovery path. It imports only a
+    plugin's optional ``cli.py`` module, not the full plugin ``__init__.py``.
+    Memory and context-engine plugins keep their own discovery systems.
+    """
+    results: List[dict] = []
+    seen: Set[str] = set()
+
+    repo_plugins = Path(__file__).resolve().parent.parent / "plugins"
+    roots: list[tuple[str, Path]] = [("bundled", repo_plugins)]
+
+    user_dir = get_hermes_home() / "plugins"
+    roots.append(("user", user_dir))
+
+    if env_var_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
+        roots.append(("project", Path.cwd() / ".hermes" / "plugins"))
+
+    for source, root in roots:
+        if not root.is_dir():
+            continue
+        for plugin_dir in sorted(root.iterdir()):
+            if not plugin_dir.is_dir() or plugin_dir.name.startswith(("_", ".")):
+                continue
+            if plugin_dir.name in {"memory", "context_engine"}:
+                continue
+            cli_file = plugin_dir / "cli.py"
+            if not cli_file.exists():
+                continue
+
+            name = plugin_dir.name
+            help_text = f"Manage {name} plugin"
+            description = ""
+            manifest_file = plugin_dir / "plugin.yaml"
+            if manifest_file.exists() and yaml is not None:
+                try:
+                    meta = yaml.safe_load(manifest_file.read_text()) or {}
+                    name = str(meta.get("name") or name)
+                    description = str(meta.get("description") or "")
+                    if description:
+                        help_text = description
+                except Exception as exc:
+                    logger.debug("Failed to read plugin CLI manifest %s: %s", manifest_file, exc)
+
+            if name in seen:
+                continue
+
+            module_name = f"_hermes_plugin_cli_{source}_{name.replace('-', '_')}"
+            try:
+                if module_name in sys.modules:
+                    cli_mod = sys.modules[module_name]
+                else:
+                    spec = importlib.util.spec_from_file_location(module_name, str(cli_file))
+                    if not spec or not spec.loader:
+                        continue
+                    cli_mod = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = cli_mod
+                    spec.loader.exec_module(cli_mod)
+
+                register_cli = getattr(cli_mod, "register_cli", None)
+                if not callable(register_cli):
+                    continue
+
+                handler_fn = (
+                    getattr(cli_mod, f"{name.replace('-', '_')}_command", None)
+                    or getattr(cli_mod, "command", None)
+                )
+                seen.add(name)
+                results.append(
+                    {
+                        "name": name,
+                        "help": help_text,
+                        "description": description,
+                        "setup_fn": register_cli,
+                        "handler_fn": handler_fn,
+                        "plugin": name,
+                    }
+                )
+            except Exception as exc:
+                logger.debug("Failed to discover CLI for plugin '%s': %s", name, exc)
+
+    return results
+
 ENTRY_POINTS_GROUP = "hermes_agent.plugins"
 
 _NS_PARENT = "hermes_plugins"

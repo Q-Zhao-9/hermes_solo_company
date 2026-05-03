@@ -2103,6 +2103,46 @@ class SkillToggle(BaseModel):
     enabled: bool
 
 
+class SkillInstallBody(BaseModel):
+    identifier: str
+    category: str = ""
+    force: bool = False
+
+
+class ToolsetToggle(BaseModel):
+    name: str
+    enabled: bool
+
+
+class ProjectBotProvisionBody(BaseModel):
+    platform: str
+    project_name: str
+    profile_slug: str = ""
+    skills: List[str] = []
+    reuse_profile: bool = False
+    clone_config: bool = False
+    alias: bool = False
+    dry_run: bool = False
+    no_start: bool = False
+    client_id: str = ""
+    application_id: str = ""
+    bot_token: str = ""
+    bot_id: str = ""
+    secret: str = ""
+    corp_id: str = ""
+    corp_secret: str = ""
+    agent_id: str = ""
+    callback_token: str = ""
+    encoding_aes_key: str = ""
+    domain: str = ""
+    port: int = 8645
+    account_id: str = ""
+    token: str = ""
+    allowed_users: List[str] = []
+    home_channel: str = ""
+    permissions: int = 274878024704
+
+
 @app.get("/api/skills")
 async def get_skills():
     from tools.skills_tool import _find_all_skills
@@ -2126,6 +2166,33 @@ async def toggle_skill(body: SkillToggle):
         disabled.add(body.name)
     save_disabled_skills(config, disabled)
     return {"ok": True, "name": body.name, "enabled": body.enabled}
+
+
+@app.get("/api/skills/hub")
+async def get_skill_hub(page: int = 1, page_size: int = 20, source: str = "all"):
+    from hermes_cli.skills_hub import browse_skills
+    return browse_skills(page=page, page_size=page_size, source=source)
+
+
+@app.post("/api/skills/install")
+async def install_skill(body: SkillInstallBody):
+    from io import StringIO
+    from rich.console import Console
+    from hermes_cli.skills_hub import do_install
+
+    capture = StringIO()
+    console = Console(file=capture, force_terminal=False, color_system=None)
+    try:
+        do_install(
+            body.identifier,
+            category=body.category,
+            force=body.force,
+            console=console,
+            skip_confirm=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "log": capture.getvalue().splitlines()[-80:]}
 
 
 @app.get("/api/tools/toolsets")
@@ -2158,6 +2225,140 @@ async def get_toolsets():
             "tools": tools,
         })
     return result
+
+
+@app.put("/api/tools/toolsets/toggle")
+async def toggle_toolset(body: ToolsetToggle):
+    from hermes_cli.tools_config import _apply_toolset_change
+
+    config = load_config()
+    action = "enable" if body.enabled else "disable"
+    _apply_toolset_change(config, "cli", [body.name], action)
+    save_config(config)
+    return {"ok": True, "name": body.name, "enabled": body.enabled}
+
+
+@app.get("/api/profiles")
+async def get_profiles():
+    from hermes_cli.profiles import list_profiles, get_active_profile_name
+
+    active = get_active_profile_name()
+    return {
+        "active": active,
+        "profiles": [
+            {
+                "name": p.name,
+                "path": str(p.path),
+                "is_default": p.is_default,
+                "model": p.model,
+                "provider": p.provider,
+                "gateway_running": p.gateway_running,
+                "skill_count": p.skill_count,
+                "active": p.name == active or (active == "default" and p.is_default),
+            }
+            for p in list_profiles()
+        ],
+    }
+
+
+@app.get("/api/project-bots")
+async def get_project_bots():
+    from hermes_cli.profiles import list_profiles
+
+    projects = []
+    for profile in list_profiles():
+        metadata_path = Path(profile.path) / "project_bot.json"
+        if not metadata_path.exists():
+            continue
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            metadata = {"profile_slug": profile.name, "project_name": profile.name}
+        projects.append({
+            **metadata,
+            "profile_slug": metadata.get("profile_slug") or profile.name,
+            "profile_path": str(profile.path),
+            "gateway_running": profile.gateway_running,
+            "skill_count": profile.skill_count,
+        })
+    return {"projects": projects}
+
+
+@app.post("/api/project-bots/provision")
+async def provision_project_bot(body: ProjectBotProvisionBody):
+    from types import SimpleNamespace
+    from plugins.project_bot_provisioner.provisioner import (
+        ProvisionRequest,
+        provision_discord,
+        provision_wecom,
+        provision_wecom_callback,
+        provision_weixin,
+    )
+
+    platform = body.platform.strip().lower()
+    handlers = {
+        "discord": provision_discord,
+        "weixin": provision_weixin,
+        "wecom": provision_wecom,
+        "wecom_callback": provision_wecom_callback,
+    }
+    handler = handlers.get(platform)
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {body.platform}")
+
+    args = SimpleNamespace(
+        project_name=body.project_name,
+        profile_slug=body.profile_slug or None,
+        skill=body.skills,
+        reuse_profile=body.reuse_profile,
+        clone_config=body.clone_config,
+        alias=body.alias,
+        dry_run=body.dry_run,
+        no_start=body.no_start,
+        client_id=body.client_id,
+        application_id=body.application_id or None,
+        bot_token=body.bot_token or None,
+        token_env=None,
+        allowed_user=body.allowed_users,
+        home_channel=body.home_channel or None,
+        permissions=body.permissions,
+        account_id=body.account_id or None,
+        token=body.token or None,
+        bot_id=body.bot_id,
+        secret=body.secret or None,
+        secret_env=None,
+        domain=body.domain,
+        corp_id=body.corp_id,
+        corp_secret=body.corp_secret or None,
+        corp_secret_env=None,
+        agent_id=body.agent_id,
+        callback_token=body.callback_token or None,
+        callback_token_env=None,
+        encoding_aes_key=body.encoding_aes_key or None,
+        encoding_aes_key_env=None,
+        port=body.port,
+    )
+    try:
+        result = handler(ProvisionRequest.from_args(args))
+    except SystemExit as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "ok": True,
+        "project_name": result.project_name,
+        "profile_slug": result.profile_slug,
+        "platform": result.platform,
+        "profile_dir": str(result.profile_dir),
+        "dry_run": result.dry_run,
+        "env_keys": result.env_keys,
+        "invite_url": result.invite_url,
+        "callback_url": result.callback_url,
+        "gateway_started": result.gateway_started,
+        "gateway_status": result.gateway_status,
+        "next_actions": result.next_actions,
+    }
 
 
 # ---------------------------------------------------------------------------

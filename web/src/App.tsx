@@ -21,6 +21,7 @@ import {
   Star,
   Code,
   Eye,
+  Bot,
 } from "lucide-react";
 import { Cell, Grid, SelectionSwitcher, Typography } from "@nous-research/ui";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ import LogsPage from "@/pages/LogsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import CronPage from "@/pages/CronPage";
 import SkillsPage from "@/pages/SkillsPage";
+import PortalPage from "@/pages/PortalPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -45,6 +47,7 @@ import { useTheme } from "@/themes";
  *  `path` in `BUILTIN_NAV` so `/path` lookups stay consistent. */
 const BUILTIN_ROUTES: Record<string, React.ComponentType> = {
   "/": StatusPage,
+  "/portal": PortalPage,
   "/sessions": SessionsPage,
   "/analytics": AnalyticsPage,
   "/logs": LogsPage,
@@ -56,6 +59,7 @@ const BUILTIN_ROUTES: Record<string, React.ComponentType> = {
 
 const BUILTIN_NAV: NavItem[] = [
   { path: "/", labelKey: "status", label: "Status", icon: Activity },
+  { path: "/portal", label: "Portal", icon: Bot },
   {
     path: "/sessions",
     labelKey: "sessions",
@@ -98,6 +102,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Star,
   Code,
   Eye,
+  Bot,
 };
 
 function resolveIcon(

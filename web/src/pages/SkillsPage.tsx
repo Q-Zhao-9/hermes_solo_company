@@ -14,6 +14,7 @@ import {
   Blocks,
   Code,
   Zap,
+  Download,
 } from "lucide-react";
 import { H2 } from "@nous-research/ui";
 import { api } from "@/lib/api";
@@ -24,6 +25,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { useI18n } from "@/i18n";
 
 /* ------------------------------------------------------------------ */
@@ -96,6 +99,10 @@ export default function SkillsPage() {
   const [view, setView] = useState<"skills" | "toolsets">("skills");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
+  const [togglingToolsets, setTogglingToolsets] = useState<Set<string>>(new Set());
+  const [installIdentifier, setInstallIdentifier] = useState("");
+  const [installCategory, setInstallCategory] = useState("");
+  const [installing, setInstalling] = useState(false);
   const { toast, showToast } = useToast();
   const { t } = useI18n();
 
@@ -131,6 +138,50 @@ export default function SkillsPage() {
         next.delete(skill.name);
         return next;
       });
+    }
+  };
+
+  const handleToggleToolset = async (toolset: ToolsetInfo) => {
+    setTogglingToolsets((prev) => new Set(prev).add(toolset.name));
+    try {
+      await api.toggleToolset(toolset.name, !toolset.enabled);
+      setToolsets((prev) =>
+        prev.map((ts) =>
+          ts.name === toolset.name ? { ...ts, enabled: !ts.enabled } : ts,
+        ),
+      );
+      showToast(
+        `${toolset.name} ${toolset.enabled ? t.common.disabled : t.common.enabled}`,
+        "success",
+      );
+    } catch {
+      showToast(`${t.common.failedToToggle} ${toolset.name}`, "error");
+    } finally {
+      setTogglingToolsets((prev) => {
+        const next = new Set(prev);
+        next.delete(toolset.name);
+        return next;
+      });
+    }
+  };
+
+  const handleInstallSkill = async () => {
+    if (!installIdentifier.trim()) return;
+    setInstalling(true);
+    try {
+      await api.installSkill({
+        identifier: installIdentifier.trim(),
+        category: installCategory.trim(),
+      });
+      const next = await api.getSkills();
+      setSkills(next);
+      showToast(`Installed ${installIdentifier.trim()}`, "success");
+      setInstallIdentifier("");
+      setInstallCategory("");
+    } catch (e) {
+      showToast(`Install failed: ${e}`, "error");
+    } finally {
+      setInstalling(false);
     }
   };
 
@@ -324,6 +375,36 @@ export default function SkillsPage() {
 
         {/* ---- Content ---- */}
         <div className="flex-1 min-w-0">
+          {view === "skills" && !isSearching && (
+            <Card className="mb-3">
+              <CardContent className="grid gap-3 py-3 md:grid-cols-[minmax(0,1fr)_180px_auto] md:items-end">
+                <div className="grid gap-1.5">
+                  <Label>Install Skill</Label>
+                  <Input
+                    value={installIdentifier}
+                    onChange={(e) => setInstallIdentifier(e.target.value)}
+                    placeholder="official/productivity/example-skill or owner/repo/path"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Category</Label>
+                  <Input
+                    value={installCategory}
+                    onChange={(e) => setInstallCategory(e.target.value)}
+                    placeholder="optional"
+                  />
+                </div>
+                <Button
+                  onClick={handleInstallSkill}
+                  disabled={installing || !installIdentifier.trim()}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  {installing ? "Installing" : "Install"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {isSearching ? (
             /* Search results */
             <Card>
@@ -427,6 +508,11 @@ export default function SkillsPage() {
                       <Card key={ts.name} className="relative">
                         <CardContent className="py-4">
                           <div className="flex items-start gap-3">
+                            <Switch
+                              checked={ts.enabled}
+                              onCheckedChange={() => handleToggleToolset(ts)}
+                              disabled={togglingToolsets.has(ts.name)}
+                            />
                             <TsIcon className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">

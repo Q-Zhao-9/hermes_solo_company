@@ -7943,9 +7943,19 @@ Examples:
     # own argparse tree.  No hardcoded plugin commands in main.py.
     # =========================================================================
     try:
-        from plugins.memory import discover_plugin_cli_commands
+        from hermes_cli.plugins import discover_plugin_cli_commands as discover_general_plugin_cli_commands
+        from plugins.memory import discover_plugin_cli_commands as discover_memory_plugin_cli_commands
 
-        for cmd_info in discover_plugin_cli_commands():
+        plugin_cli_commands = (
+            discover_general_plugin_cli_commands()
+            + discover_memory_plugin_cli_commands()
+        )
+    except Exception as _exc:
+        logging.getLogger(__name__).debug("Plugin CLI discovery failed: %s", _exc)
+        plugin_cli_commands = []
+
+    for cmd_info in plugin_cli_commands:
+        try:
             plugin_parser = subparsers.add_parser(
                 cmd_info["name"],
                 help=cmd_info["help"],
@@ -7953,8 +7963,12 @@ Examples:
                 formatter_class=__import__("argparse").RawDescriptionHelpFormatter,
             )
             cmd_info["setup_fn"](plugin_parser)
-    except Exception as _exc:
-        logging.getLogger(__name__).debug("Plugin CLI discovery failed: %s", _exc)
+        except Exception as _exc:
+            logging.getLogger(__name__).debug(
+                "Plugin CLI command registration failed for %s: %s",
+                cmd_info.get("name"),
+                _exc,
+            )
 
     # =========================================================================
     # memory command

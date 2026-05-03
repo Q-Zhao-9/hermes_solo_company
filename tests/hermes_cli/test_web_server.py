@@ -709,6 +709,49 @@ class TestNewEndpoints:
             },
         ]
 
+    def test_toolset_toggle_endpoint(self, monkeypatch):
+        import hermes_cli.web_server as web_server
+
+        saved = {}
+        monkeypatch.setattr(web_server, "load_config", lambda: {"platform_toolsets": {"cli": ["web"]}})
+        monkeypatch.setattr(web_server, "save_config", lambda cfg: saved.update(cfg))
+
+        resp = self.client.put("/api/tools/toolsets/toggle", json={"name": "memory", "enabled": True})
+
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert "memory" in saved["platform_toolsets"]["cli"]
+        assert "web" in saved["platform_toolsets"]["cli"]
+
+    def test_profiles_endpoint(self):
+        from hermes_cli.profiles import create_profile
+
+        create_profile("portal-test", no_alias=True)
+
+        resp = self.client.get("/api/profiles")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "profiles" in data
+        assert any(p["name"] == "portal-test" for p in data["profiles"])
+
+    def test_project_bot_provision_dry_run(self):
+        resp = self.client.post(
+            "/api/project-bots/provision",
+            json={
+                "platform": "discord",
+                "project_name": "Portal Bot",
+                "client_id": "123456789",
+                "allowed_users": ["42"],
+                "dry_run": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["profile_slug"] == "portal-bot"
+        assert data["invite_url"].startswith("https://discord.com/oauth2/authorize?")
+
     def test_config_raw_get(self):
         resp = self.client.get("/api/config/raw")
         assert resp.status_code == 200
