@@ -10,14 +10,36 @@ type TokenRecord = {
   lastUsedAt: string | null;
 };
 
-export function DashboardClient({ email }: { email: string }) {
+type GeneratedPageRecord = {
+  id: string;
+  title: string;
+  source: string;
+  createdAt: string;
+  generatedUrl: string;
+  siteletUrl: string;
+  storageFile: string;
+  htmlBytes: number;
+};
+
+export function DashboardClient({
+  email,
+  siteletBaseUrl,
+  configuredApiToken,
+}: {
+  email: string;
+  siteletBaseUrl: string;
+  configuredApiToken: string;
+}) {
   const [tokens, setTokens] = useState<TokenRecord[]>([]);
   const [tokenName, setTokenName] = useState("Hermes Discord Bot");
   const [newToken, setNewToken] = useState("");
   const [status, setStatus] = useState("");
+  const [history, setHistory] = useState<GeneratedPageRecord[]>([]);
+  const [historyStatus, setHistoryStatus] = useState("");
 
   useEffect(() => {
     void refreshTokens();
+    void refreshHistory();
   }, []);
 
   async function refreshTokens() {
@@ -26,6 +48,18 @@ export function DashboardClient({ email }: { email: string }) {
     if (payload.ok) {
       setTokens(payload.tokens);
     }
+  }
+
+  async function refreshHistory() {
+    setHistoryStatus("Loading history...");
+    const response = await fetch("/api/generated/history");
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      setHistoryStatus(payload.error || "Could not load generated page history.");
+      return;
+    }
+    setHistory(payload.pages);
+    setHistoryStatus("");
   }
 
   async function createToken(event: FormEvent<HTMLFormElement>) {
@@ -103,13 +137,37 @@ export function DashboardClient({ email }: { email: string }) {
             Configure Hermes with this service URL and token, then ask the bot
             to use Sitelet when it generates or modifies a page.
           </p>
-          <pre>{`SITELET_BASE_URL=https://your-sitelet-domain.example
-SITELET_API_TOKEN=${newToken || "stlt_your_token_here"}`}</pre>
+          <pre>{`SITELET_BASE_URL=${siteletBaseUrl}
+SITELET_API_TOKEN=${newToken || configuredApiToken || "stlt_your_token_here"}`}</pre>
           <p>
             Upload endpoint: <code>/api/generated</code>. The response includes
             <code> generatedUrl </code> and <code> siteletUrl </code>.
           </p>
         </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="section-title-row">
+          <div>
+            <h2>WordPress editing plugin</h2>
+            <p>
+              Install this plugin on a WordPress site to expose the controlled
+              Hermes MCP endpoint used by the WordPress editing skill.
+            </p>
+          </div>
+          <a
+            className="download-button"
+            href="/downloads/hermes-mcp-wordpress-plugin.zip"
+            download
+          >
+            Download Plugin
+          </a>
+        </div>
+        <p>
+          After activation, open <strong>Settings -&gt; Hermes MCP</strong> in
+          WordPress, generate an API key, enable the endpoint, and add the
+          endpoint URL plus bearer token to Hermes.
+        </p>
       </section>
 
       <section className="dashboard-section">
@@ -134,6 +192,54 @@ SITELET_API_TOKEN=${newToken || "stlt_your_token_here"}`}</pre>
           ))}
         </div>
       </section>
+
+      <section className="dashboard-section">
+        <div className="section-title-row">
+          <div>
+            <h2>Sitelet history</h2>
+            <p>
+              Pages uploaded by Hermes are stored here so you can reopen the
+              preview URL or inspect the backing file later.
+            </p>
+          </div>
+          <button type="button" className="secondary-button" onClick={refreshHistory}>
+            Refresh
+          </button>
+        </div>
+        {historyStatus ? <p className="form-status">{historyStatus}</p> : null}
+        <div className="history-list">
+          {history.length === 0 && !historyStatus ? <p>No generated pages yet.</p> : null}
+          {history.map((page) => (
+            <article className="history-row" key={page.id}>
+              <div className="history-main">
+                <strong>{page.title}</strong>
+                <span>
+                  {page.source} · {new Date(page.createdAt).toLocaleString()} · {formatBytes(page.htmlBytes)}
+                </span>
+                <code>{page.storageFile}</code>
+              </div>
+              <div className="history-actions">
+                <a href={page.siteletUrl} target="_blank" rel="noreferrer">
+                  Preview
+                </a>
+                <a href={page.generatedUrl} target="_blank" rel="noreferrer">
+                  HTML
+                </a>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
     </main>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

@@ -42,6 +42,28 @@ When the user asks to set the Sitelet URL or token, update `~/.hermes/.env` with
 5. Send `siteletUrl` to the current chat or target Discord channel.
 6. If the user asks for a screenshot, open `siteletUrl` with browser tools, capture a screenshot, verify the image path exists, then send it as a media attachment.
 
+## WordPress Pre-Deploy Preview Workflow
+
+Use this when the user wants to preview proposed WordPress page or post edits
+before writing them to a WordPress site.
+
+1. Collect or infer the proposed WordPress fields:
+   - `title`
+   - `content` as HTML, Gutenberg block HTML, or plain text
+   - optional `site_name`, `slug`, `excerpt`, `featured_image_url`, `status`
+   - optional `theme_css` if the target theme styles are known
+2. Call `wordpress_preview_publish` with those fields.
+3. The tool renders standalone WordPress-style preview HTML, uploads it to
+   Sitelet with source `wordpress-preview`, and returns `siteletUrl`.
+4. Share `siteletUrl` with the user. It is stored in Sitelet history so the
+   user can reopen the preview later from the dashboard.
+5. Only after the user approves the preview should Hermes use the WordPress MCP
+   tools to create or update the actual WordPress page.
+
+This is a visual approximation. It preserves provided HTML/Gutenberg markup and
+can apply optional theme CSS, but it does not execute WordPress PHP, shortcodes,
+plugins, or theme template code.
+
 ## Chat Response Pattern
 
 Keep the response short:

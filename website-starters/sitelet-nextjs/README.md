@@ -18,6 +18,8 @@ It is designed for remote review workflows:
 - Per-user API tokens for Hermes agents
 - Token-authenticated generated page upload at `/api/generated`
 - Public generated page and `/sitelet` preview URLs for sharing in Discord
+- Dashboard history for previously uploaded generated pages, including preview links and backing JSON files
+- Dashboard download for the Hermes MCP WordPress plugin used by the WordPress editing skill
 - File-backed storage under `.sitelet/` by default
 
 ## Run
@@ -60,9 +62,13 @@ Set these environment variables in the cloud host:
 SITELET_AUTH_SECRET=replace-with-at-least-32-random-characters
 SITELET_DATA_DIR=/persistent/sitelet-data
 SITELET_GENERATED_DIR=/persistent/sitelet-data/generated
+SITELET_PUBLIC_URL=https://your-sitelet-domain.example
 ```
 
 `SITELET_DATA_DIR` and `SITELET_GENERATED_DIR` must point to persistent storage. If the host has an ephemeral filesystem, use a mounted volume or swap `lib/sitelet-store.ts` and `lib/generated-store.ts` to a database-backed implementation.
+`SITELET_PUBLIC_URL` is optional when the host forwards the public `Host` header correctly, but setting it makes generated preview links stable behind reverse proxies and container networks.
+
+For local production-mode HTTP previews, set `SITELET_PUBLIC_URL=http://localhost:3020` or `SITELET_COOKIE_SECURE=false`; otherwise browsers may reject the login session cookie because production mode defaults to secure cookies.
 
 Build and run:
 
@@ -111,6 +117,12 @@ SITELET_API_TOKEN=stlt_your_token_here
 ```
 
 Use the `sitelet-cloud-render` skill. Hermes should POST generated HTML to `$SITELET_BASE_URL/api/generated` with `Authorization: Bearer $SITELET_API_TOKEN`, then share the returned `siteletUrl`.
+
+Hermes also exposes a `sitelet_publish` tool in the default toolset. It accepts raw HTML or a local HTML file path, uploads it to `$SITELET_BASE_URL/api/generated`, and returns the `siteletUrl` that the gateway can post back to Discord.
+
+The dashboard keeps a Sitelet history section for uploaded pages. It lists the title, source, created time, preview URL, direct generated HTML URL, and the JSON file stored under `SITELET_GENERATED_DIR`.
+
+The dashboard also links `/downloads/hermes-mcp-wordpress-plugin.zip`, a WordPress plugin that exposes a controlled Hermes MCP endpoint. Install it in WordPress, activate it, then configure **Settings -> Hermes MCP** with an API key and enabled tools.
 
 ## How It Works
 

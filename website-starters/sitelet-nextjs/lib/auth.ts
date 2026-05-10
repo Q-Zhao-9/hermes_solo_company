@@ -153,7 +153,7 @@ export async function setSessionCookie(userId: string): Promise<void> {
   cookieStore.set(SESSION_COOKIE, signSession(userId), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookies(),
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
   });
@@ -164,7 +164,7 @@ export async function clearSessionCookie(): Promise<void> {
   cookieStore.set(SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookies(),
     path: "/",
     maxAge: 0,
   });
@@ -217,6 +217,20 @@ function authSecret(): string {
     throw new Error("SITELET_AUTH_SECRET must be set to at least 32 characters in production.");
   }
   return "dev-sitelet-secret-change-before-deploy";
+}
+
+function shouldUseSecureCookies(): boolean {
+  const explicit = process.env.SITELET_COOKIE_SECURE?.trim().toLowerCase();
+  if (explicit) {
+    return ["1", "true", "yes", "on"].includes(explicit);
+  }
+
+  const publicUrl = process.env.SITELET_PUBLIC_URL?.trim();
+  if (publicUrl) {
+    return publicUrl.startsWith("https://");
+  }
+
+  return process.env.NODE_ENV === "production";
 }
 
 function normalizeEmail(email: string): string {

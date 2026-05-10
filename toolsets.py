@@ -58,6 +58,8 @@ _HERMES_CORE_TOOLS = [
     "cronjob",
     # Cross-platform messaging (gated on gateway running via check_fn)
     "send_message",
+    # Sitelet HTML preview publishing
+    "sitelet_publish", "wordpress_preview_publish",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
 ]
@@ -130,6 +132,12 @@ TOOLSETS = {
     "messaging": {
         "description": "Cross-platform messaging: send messages to Telegram, Discord, Slack, SMS, etc.",
         "tools": ["send_message"],
+        "includes": []
+    },
+
+    "sitelet": {
+        "description": "Publish generated HTML to a Sitelet preview server and return shareable links",
+        "tools": ["sitelet_publish", "wordpress_preview_publish"],
         "includes": []
     },
     

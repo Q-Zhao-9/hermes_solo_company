@@ -1,4 +1,5 @@
 .next
+.sitelet
 node_modules
 out
 .env*.local

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -16,6 +16,11 @@ export type GeneratedPageRecord = {
   userId?: string;
   createdAt: string;
   html: string;
+};
+
+export type GeneratedPageSummary = Omit<GeneratedPageRecord, "html"> & {
+  storageFile: string;
+  htmlBytes: number;
 };
 
 export function generatedRoot(): string {
@@ -54,6 +59,46 @@ export async function readGeneratedPage(id: string): Promise<GeneratedPageRecord
   return JSON.parse(raw) as GeneratedPageRecord;
 }
 
+export async function listGeneratedPages(userId?: string): Promise<GeneratedPageSummary[]> {
+  const root = generatedRoot();
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch (error) {
+    if (isNotFound(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  const records = await Promise.all(
+    names
+      .filter((name) => name.endsWith(".json"))
+      .map(async (name): Promise<GeneratedPageSummary | null> => {
+        try {
+          const storageFile = path.join(root, name);
+          const raw = await readFile(storageFile, "utf8");
+          const record = JSON.parse(raw) as GeneratedPageRecord;
+          if (userId && record.userId && record.userId !== userId) {
+            return null;
+          }
+          const { html, ...summary } = record;
+          return {
+            ...summary,
+            storageFile,
+            htmlBytes: Buffer.byteLength(html || "", "utf8"),
+          };
+        } catch {
+          return null;
+        }
+      }),
+  );
+
+  return records
+    .filter((record): record is GeneratedPageSummary => Boolean(record))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 function makeGeneratedId(html: string): string {
   const hash = createHash("sha256").update(html).digest("hex").slice(0, 10);
   return `${Date.now().toString(36)}-${hash}-${randomUUID().slice(0, 8)}`;
@@ -61,6 +106,10 @@ function makeGeneratedId(html: string): string {
 
 function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, "");
+}
+
+function isNotFound(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
 function sanitizeTitle(value: string): string {

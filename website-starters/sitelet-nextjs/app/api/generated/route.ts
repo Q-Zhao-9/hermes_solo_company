@@ -1,5 +1,6 @@
 import { saveGeneratedPage } from "../../../lib/generated-store";
 import { AuthError, getSessionUser, requireBearerUser } from "../../../lib/auth";
+import { resolvePublicOriginFromRequest } from "../../../lib/public-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +16,9 @@ export async function POST(request: Request): Promise<Response> {
       userId: user?.id,
     });
 
-    const requestUrl = new URL(request.url);
-    const generatedUrl = new URL(`/generated/${record.id}`, requestUrl.origin);
-    const siteletUrl = new URL("/sitelet", requestUrl.origin);
+    const publicOrigin = resolvePublicOriginFromRequest(request);
+    const generatedUrl = new URL(`/generated/${record.id}`, publicOrigin);
+    const siteletUrl = new URL("/sitelet", publicOrigin);
     siteletUrl.searchParams.set("url", generatedUrl.toString());
 
     return Response.json({
@@ -36,7 +37,13 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 async function authenticateUpload(request: Request) {
-  if (request.headers.get("authorization")) {
+  const authorization = request.headers.get("authorization");
+  if (authorization) {
+    const configuredToken = process.env.SITELET_API_TOKEN?.trim();
+    const bearerToken = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    if (configuredToken && bearerToken === configuredToken) {
+      return null;
+    }
     return requireBearerUser(request);
   }
 
