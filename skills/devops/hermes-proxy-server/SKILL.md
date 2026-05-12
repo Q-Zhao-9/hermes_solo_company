@@ -1,7 +1,7 @@
 ---
 name: hermes-proxy-server
-description: Start one or more local Hermes proxy connectors for local websites, Sitelet instances, or Hermes API servers, then return public preview URLs from the Hermes cloud proxy.
-version: 1.2.0
+description: Start and manage one or more simultaneous local Hermes proxy connectors from one bot/server, assigning each local website a unique site name and public preview URL.
+version: 1.3.0
 metadata:
   hermes:
     tags: [devops, proxy, tunnel, sitelet, local-development, cloud]
@@ -9,9 +9,10 @@ metadata:
 
 # Hermes Proxy Server
 
-Use this skill when the user wants a public URL that tunnels back to a local
-Hermes machine, Sitelet instance, or website dev server. This is the Hermes
-managed alternative to ngrok-style access.
+Use this skill when the user wants public URLs that tunnel back to one or more
+local websites on the same Hermes machine. Treat multi-site support as the
+default: one Hermes bot/server can expose several local services at the same
+time through the same `HERMES_PROXY_BASE_URL` and `HERMES_PROXY_TOKEN`.
 
 ## Current Architecture
 
@@ -19,18 +20,19 @@ managed alternative to ngrok-style access.
 - Local connector token: `HERMES_PROXY_TOKEN`
 - Local connector implementation: `hermes_proxy/proxy-server/local_connector.py`
 - Helper script for Hermes: `scripts/start_hermes_proxy_connector.py`
-- Public preview URL shape:
+- Public preview URL shape for each site:
 
 ```text
-https://proxy.example.com/p/<tunnel-id>/
+https://proxy.example.com/p/<base-tunnel-id>-<site>/
 ```
 
 The user creates a proxy token in the cloud proxy dashboard. The local Hermes
 machine uses that token to connect outward to the cloud proxy over WebSocket.
-Browser requests to `/p/<tunnel-id>/...` are forwarded to the local service.
-One proxy token can expose multiple local services at the same time. Each
-connector should use a different `--site` name, which creates a different
-public URL.
+Browser requests to `/p/<tunnel-id>/...` are forwarded to the matching local
+service. One proxy token can expose multiple local services at the same time.
+Each connector must use a different `--site` name, which creates a different
+public URL. Reusing a `--site` name intentionally replaces that site's existing
+connector.
 
 ## Required Local Configuration
 
@@ -43,6 +45,21 @@ HERMES_PROXY_REPO_DIR=/tmp/hermes_proxy
 ```
 
 Do not commit real `HERMES_PROXY_TOKEN` values.
+
+## Multi-Site Operating Rules
+
+- Always choose a stable, unique `--site` key for each local website, such as
+  `sitelet`, `crm`, `marketing`, `student-demo`, or `wp-preview`.
+- Do not start a new connector with a site key that is already in use unless the
+  user wants to replace that site's target.
+- Use one helper invocation per local service. Multiple helper processes can
+  run at the same time.
+- If the user asks to expose several local websites, start all requested
+  connectors and return a compact list or table of `site`, `target`, and
+  `publicUrl`.
+- If the user only says "expose the website", infer a site key from the app
+  name or port, for example `sitelet` for port `3020` or `local-8002` for port
+  `8002`.
 
 ## Start A Public Preview
 
@@ -66,6 +83,7 @@ a unique `--site` value:
 ```bash
 python3 scripts/start_hermes_proxy_connector.py --target http://127.0.0.1:3000 --site app
 python3 scripts/start_hermes_proxy_connector.py --target http://127.0.0.1:8002 --site marketing
+python3 scripts/start_hermes_proxy_connector.py --target http://127.0.0.1:3020 --site sitelet
 ```
 
 The helper prints JSON with:
@@ -77,7 +95,12 @@ The helper prints JSON with:
 - `publicUrl`
 - `logFile`
 
-Return `publicUrl` to the user.
+Return `publicUrl` to the user. For multiple sites, return one line per site:
+
+```text
+sitelet   http://127.0.0.1:3020   https://proxy.example.com/p/<id>-sitelet/
+marketing http://127.0.0.1:8002   https://proxy.example.com/p/<id>-marketing/
+```
 
 ## Manual Connector Command
 
@@ -113,6 +136,9 @@ Public preview:
 ```bash
 curl -I "$HERMES_PROXY_BASE_URL/p/<tunnel-id>/"
 ```
+
+For multi-site debugging, inspect `activeTunnels`; each item includes
+`tunnelId`, `baseTunnelId`, `site`, and `target`.
 
 ## Safety Rules
 
