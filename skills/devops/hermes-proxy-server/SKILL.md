@@ -1,7 +1,7 @@
 ---
 name: hermes-proxy-server
-description: Start a local Hermes proxy connector for a local website, Sitelet instance, or Hermes API server, then return the public preview URL from the Hermes cloud proxy.
-version: 1.1.0
+description: Start one or more local Hermes proxy connectors for local websites, Sitelet instances, or Hermes API servers, then return public preview URLs from the Hermes cloud proxy.
+version: 1.2.0
 metadata:
   hermes:
     tags: [devops, proxy, tunnel, sitelet, local-development, cloud]
@@ -28,6 +28,9 @@ https://proxy.example.com/p/<tunnel-id>/
 The user creates a proxy token in the cloud proxy dashboard. The local Hermes
 machine uses that token to connect outward to the cloud proxy over WebSocket.
 Browser requests to `/p/<tunnel-id>/...` are forwarded to the local service.
+One proxy token can expose multiple local services at the same time. Each
+connector should use a different `--site` name, which creates a different
+public URL.
 
 ## Required Local Configuration
 
@@ -52,13 +55,24 @@ When a user asks to expose a local service, first identify the local target URL:
 Then run:
 
 ```bash
-python3 scripts/start_hermes_proxy_connector.py --target http://127.0.0.1:3020
+python3 scripts/start_hermes_proxy_connector.py \
+  --target http://127.0.0.1:3020 \
+  --site sitelet
+```
+
+For multiple simultaneous websites, run the helper once per local service with
+a unique `--site` value:
+
+```bash
+python3 scripts/start_hermes_proxy_connector.py --target http://127.0.0.1:3000 --site app
+python3 scripts/start_hermes_proxy_connector.py --target http://127.0.0.1:8002 --site marketing
 ```
 
 The helper prints JSON with:
 
 - `pid`
 - `target`
+- `site`
 - `tunnelId`
 - `publicUrl`
 - `logFile`
@@ -74,6 +88,7 @@ cd /tmp/hermes_proxy/proxy-server
 export CLOUD_PROXY_URL="$HERMES_PROXY_BASE_URL"
 export HERMES_PROXY_TOKEN="$HERMES_PROXY_TOKEN"
 export LOCAL_PROXY_TARGET="http://127.0.0.1:3020"
+export HERMES_PROXY_SITE="sitelet"
 python3 local_connector.py
 ```
 
@@ -90,7 +105,7 @@ curl "$HERMES_PROXY_BASE_URL/_health"
 The response should show an active tunnel:
 
 ```json
-{"status":"ok","active_tunnels":1,"tunnels":["..."]}
+{"status":"ok","active_tunnels":2,"tunnels":["..."],"activeTunnels":[...]}
 ```
 
 Public preview:
@@ -109,8 +124,8 @@ curl -I "$HERMES_PROXY_BASE_URL/p/<tunnel-id>/"
 - Use the generated `hpxy_...` proxy token only in local environment files or
   process environment variables.
 - Rotate the token if it was printed in public logs or committed accidentally.
-- Prefer stopping old connector processes before exposing a different local
-  service with the same token.
+- Use a unique `--site` name for each simultaneous local service. Reusing the
+  same site name intentionally replaces the previous connector for that site.
 
 ## Troubleshooting
 
