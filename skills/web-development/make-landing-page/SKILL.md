@@ -17,10 +17,16 @@ marketing site.
 
 1. Identify the offer, target customer, primary CTA, credibility proof, and
    contact or lead-capture requirement.
-2. Use `website-agency-orchestrator` for structure and platform routing.
-3. Use `website-seo-content` for headline, sections, FAQ, metadata, and schema.
-4. Implement with `static-html-site-builder` for simple exportable pages or
+2. For a fast static or Next.js first draft, use:
+
+   ```bash
+   scripts/website_agency.py create-site --name "<offer/site name>" --description "<landing page offer>" --audience "<target customer>" --goal "<CTA>" --platform static
+   ```
+
+3. Use `website-agency-orchestrator` for structure and platform routing.
+4. Use `website-seo-content` for headline, sections, FAQ, metadata, and schema.
+5. Implement with `static-html-site-builder` for simple exportable pages or
    `nextjs-site-builder` when the project is already React/Next.js.
-5. Run available checks and provide a preview URL when requested.
+6. Run available checks and provide a preview URL when requested.
 
 Prefer a complete usable landing page over placeholder content.

@@ -16,13 +16,19 @@ new website from a business idea.
 ## Workflow
 
 1. Use `website-agency-orchestrator` as the primary workflow.
-2. Gather or infer the business type, target audience, conversion goal, pages,
+2. For static HTML or Next.js MVP projects, prefer the deterministic helper:
+
+   ```bash
+   scripts/website_agency.py create-site --name "<business name>" --description "<business description>" --audience "<target users>" --goal "<CTA>" --tone "<brand tone>" --platform auto
+   ```
+
+3. Gather or infer the business type, target audience, conversion goal, pages,
    platform preference, brand tone, and required integrations.
-3. Produce the website brief, sitemap, design system, and content plan before
+4. Produce the website brief, sitemap, design system, and content plan before
    coding unless the user explicitly asks for a quick prototype.
-4. Route implementation to `nextjs-site-builder`, `static-html-site-builder`,
+5. Route implementation to `nextjs-site-builder`, `static-html-site-builder`,
    `wordpress-site-builder`, or `shopify-site-builder`.
-5. Build, preview, QA, and summarize changed files or project path.
+6. Build, preview, QA, and summarize changed files or project path.
 
 Default to a professional Next.js site for custom business/product websites,
 static HTML for a quick class/demo landing page, WordPress for editable content

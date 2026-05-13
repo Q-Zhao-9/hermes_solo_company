@@ -16,12 +16,19 @@ website in a browser.
 ## Workflow
 
 1. Inspect the project type and package scripts.
-2. Build or start the dev/preview server using the project convention.
-3. For local browser access, bind to `0.0.0.0` when needed and provide the local
+2. For static HTML and Next.js projects, prefer the deterministic helper:
+
+   ```bash
+   scripts/website_agency.py build-preview --project-dir "<project dir>" --port 3010
+   ```
+
+   Add `--start` when the user explicitly wants the local preview server started.
+3. Build or start the dev/preview server using the project convention.
+4. For local browser access, bind to `0.0.0.0` when needed and provide the local
    URL plus any Windows/WSL access note.
-4. Use `hermes-proxy-server` for public preview of a local server.
-5. Use `sitelet-cloud-render` for uploaded static HTML or WordPress pre-deploy
+5. Use `hermes-proxy-server` for public preview of a local server.
+6. Use `sitelet-cloud-render` for uploaded static HTML or WordPress pre-deploy
    preview history.
-6. If the build fails, switch to `fix-build`.
+7. If the build fails, switch to `fix-build`.
 
 Return the preview URL and the command/process status.
