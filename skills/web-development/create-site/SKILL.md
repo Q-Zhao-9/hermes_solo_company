@@ -19,8 +19,11 @@ new website from a business idea.
 2. For static HTML or Next.js MVP projects, prefer the deterministic helper:
 
    ```bash
-   scripts/website_agency.py create-site --name "<business name>" --description "<business description>" --audience "<target users>" --goal "<CTA>" --tone "<brand tone>" --platform auto
+   scripts/website_agency.py create-site --name "<business name>" --description "<business description>" --audience "<target users>" --goal "<CTA>" --tone "<brand tone>" --platform auto --template auto
    ```
+
+   Supported templates: `local-service`, `restaurant`, `saas`, `consultant`,
+   `ecommerce`, `portfolio`.
 
 3. Gather or infer the business type, target audience, conversion goal, pages,
    platform preference, brand tone, and required integrations.

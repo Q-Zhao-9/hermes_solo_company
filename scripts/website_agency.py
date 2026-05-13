@@ -37,6 +37,7 @@ class SiteSpec:
     goal: str
     tone: str
     platform: str
+    template: str
     slug: str
 
 
@@ -67,10 +68,119 @@ def choose_platform(requested: str, description: str) -> str:
     return "static"
 
 
+def choose_template(requested: str, description: str) -> str:
+    if requested != "auto":
+        return requested
+    lowered = description.lower()
+    markers = {
+        "restaurant": ("restaurant", "cafe", "coffee", "bakery", "bar", "menu", "dining", "food"),
+        "saas": ("saas", "software", "dashboard", "platform", "portal", "login", "subscription", "api"),
+        "portfolio": ("portfolio", "designer", "photographer", "artist", "resume", "creative work"),
+        "ecommerce": ("ecommerce", "e-commerce", "shop", "store", "product", "collection", "retail"),
+        "consultant": ("consultant", "consulting", "advisor", "agency", "studio", "strategy", "service firm"),
+        "local-service": ("dentist", "clinic", "plumber", "roofer", "salon", "cleaning", "law firm", "local"),
+    }
+    for template, words in markers.items():
+        if any(word in lowered for word in words):
+            return template
+    return "local-service"
+
+
+def template_profile(spec: SiteSpec) -> dict[str, Any]:
+    profiles: dict[str, dict[str, Any]] = {
+        "local-service": {
+            "eyebrow": "Local service website",
+            "hero": f"{spec.name} makes it easier for {spec.audience} to get trusted help.",
+            "proof": ["Fast response", "Clear pricing", "Trusted local team"],
+            "section_eyebrow": "Services",
+            "section_heading": "Practical help, delivered with care",
+            "cards": [
+                ("Service clarity", "Explain what customers can book, request, or compare before they call."),
+                ("Trust signals", "Show proof, reviews, credentials, and local expertise where decisions happen."),
+                ("Lead capture", "Make the next step obvious with phone, form, and appointment CTAs."),
+            ],
+            "process": ["Request a quote or appointment.", "Confirm the service details.", "Get clear follow-through."],
+            "final_heading": "Ready to get started?",
+        },
+        "restaurant": {
+            "eyebrow": "Restaurant website",
+            "hero": f"{spec.name} brings memorable dining moments to {spec.audience}.",
+            "proof": ["Seasonal menu", "Easy reservations", "Private events"],
+            "section_eyebrow": "Menu highlights",
+            "section_heading": "Designed to turn hungry visitors into guests",
+            "cards": [
+                ("Signature dishes", "Feature the dishes, drinks, and specials that define the experience."),
+                ("Reservations", "Keep booking, hours, location, and contact details easy to find."),
+                ("Events", "Promote catering, private dining, and group occasions with clear next steps."),
+            ],
+            "process": ["Explore the menu.", "Reserve a table or order.", "Visit and enjoy the experience."],
+            "final_heading": "Plan your next visit",
+        },
+        "saas": {
+            "eyebrow": "SaaS website",
+            "hero": f"{spec.name} helps {spec.audience} turn daily work into measurable progress.",
+            "proof": ["Product clarity", "Workflow automation", "Scalable platform"],
+            "section_eyebrow": "Product value",
+            "section_heading": "Built for teams that need traction, not noise",
+            "cards": [
+                ("Use case focus", "Show the strongest workflow and the business result it creates."),
+                ("Product confidence", "Explain security, integrations, onboarding, and support expectations."),
+                ("Conversion path", "Guide visitors toward demos, trials, pricing, or sales conversations."),
+            ],
+            "process": ["Map the workflow.", "Launch the workspace.", "Measure and improve results."],
+            "final_heading": "Ready to see the product?",
+        },
+        "consultant": {
+            "eyebrow": "Consulting website",
+            "hero": f"{spec.name} gives {spec.audience} sharper strategy and cleaner execution.",
+            "proof": ["Senior guidance", "Focused roadmap", "Execution support"],
+            "section_eyebrow": "Advisory services",
+            "section_heading": "A clear path from insight to implementation",
+            "cards": [
+                ("Strategy", "Clarify positioning, opportunities, and the decisions that need momentum."),
+                ("Systems", "Turn recommendations into repeatable processes, content, and operating rhythm."),
+                ("Partnership", "Support implementation with practical guidance and measurable next steps."),
+            ],
+            "process": ["Diagnose the current state.", "Prioritize the roadmap.", "Execute and refine."],
+            "final_heading": "Start the conversation",
+        },
+        "ecommerce": {
+            "eyebrow": "Ecommerce concept",
+            "hero": f"{spec.name} helps {spec.audience} discover products with confidence.",
+            "proof": ["Curated products", "Clear benefits", "Smooth purchase path"],
+            "section_eyebrow": "Shop experience",
+            "section_heading": "Built to support discovery, trust, and conversion",
+            "cards": [
+                ("Product story", "Highlight hero products, benefits, materials, and customer outcomes."),
+                ("Collection flow", "Organize categories, recommendations, and bundles for easier browsing."),
+                ("Purchase confidence", "Clarify shipping, returns, reviews, and support before checkout."),
+            ],
+            "process": ["Browse the collection.", "Compare the right fit.", "Buy with confidence."],
+            "final_heading": "Explore the collection",
+        },
+        "portfolio": {
+            "eyebrow": "Portfolio website",
+            "hero": f"{spec.name} presents the work, story, and proof {spec.audience} need to take action.",
+            "proof": ["Selected work", "Clear story", "Contact-ready"],
+            "section_eyebrow": "Featured work",
+            "section_heading": "A portfolio structured for credibility and inquiry",
+            "cards": [
+                ("Case studies", "Show the problem, process, craft, and outcome behind important work."),
+                ("Point of view", "Make the creator's style, values, and strengths easy to understand."),
+                ("Inquiry path", "Give clients, recruiters, or collaborators a simple way to start."),
+            ],
+            "process": ["Review selected work.", "Understand the approach.", "Start a collaboration."],
+            "final_heading": "Let us build something",
+        },
+    }
+    return profiles.get(spec.template, profiles["local-service"])
+
+
 def build_spec(args: argparse.Namespace) -> SiteSpec:
     name = args.name.strip()
     description = args.description.strip()
     platform = choose_platform(args.platform, description)
+    template = choose_template(args.template, description)
     return SiteSpec(
         name=name,
         description=description,
@@ -78,6 +188,7 @@ def build_spec(args: argparse.Namespace) -> SiteSpec:
         goal=args.goal.strip(),
         tone=args.tone.strip(),
         platform=platform,
+        template=template,
         slug=slugify(name),
     )
 
@@ -110,6 +221,7 @@ def create_site(args: argparse.Namespace) -> dict[str, Any]:
         "ok": True,
         "projectDir": str(root),
         "platform": spec.platform,
+        "template": spec.template,
         "slug": spec.slug,
         "files": sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()),
         "preview": preview,
@@ -122,6 +234,7 @@ def create_site(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def write_project_docs(root: Path, spec: SiteSpec) -> None:
+    profile = template_profile(spec)
     write_text(
         root / "docs" / "website-brief.md",
         f"""# Website Brief: {spec.name}
@@ -140,6 +253,9 @@ def write_project_docs(root: Path, spec: SiteSpec) -> None:
 
 ## Platform
 {spec.platform}
+
+## Template
+{spec.template}
 
 ## Assumptions
 - Build a polished first draft suitable for preview.
@@ -211,6 +327,10 @@ Status: generated, not yet manually reviewed.
 
 
 def write_static_project(root: Path, spec: SiteSpec) -> None:
+    profile = template_profile(spec)
+    cards = profile["cards"]
+    proof = profile["proof"]
+    process = profile["process"]
     write_text(
         root / "index.html",
         f"""<!doctype html>
@@ -235,34 +355,34 @@ def write_static_project(root: Path, spec: SiteSpec) -> None:
     <main id="top">
       <section class="hero">
         <div>
-          <p class="eyebrow">{escape_html(spec.tone)} website experience</p>
-          <h1>{escape_html(spec.name)} helps {escape_html(spec.audience)} move faster.</h1>
+          <p class="eyebrow">{escape_html(profile["eyebrow"])}</p>
+          <h1>{escape_html(profile["hero"])}</h1>
           <p>{escape_html(spec.description)}</p>
           <a class="button" href="#contact">{escape_html(spec.goal)}</a>
         </div>
       </section>
 
       <section class="proof" aria-label="Key strengths">
-        <span>Clear strategy</span>
-        <span>Responsive design</span>
-        <span>SEO-ready content</span>
+        <span>{escape_html(proof[0])}</span>
+        <span>{escape_html(proof[1])}</span>
+        <span>{escape_html(proof[2])}</span>
       </section>
 
       <section id="services" class="section">
-        <p class="eyebrow">Capabilities</p>
-        <h2>Built around the customer journey</h2>
+        <p class="eyebrow">{escape_html(profile["section_eyebrow"])}</p>
+        <h2>{escape_html(profile["section_heading"])}</h2>
         <div class="grid">
           <article>
-            <h3>Positioning</h3>
-            <p>Translate the business value into a focused message visitors can understand quickly.</p>
+            <h3>{escape_html(cards[0][0])}</h3>
+            <p>{escape_html(cards[0][1])}</p>
           </article>
           <article>
-            <h3>Conversion</h3>
-            <p>Place calls to action, trust points, and service details where they support decisions.</p>
+            <h3>{escape_html(cards[1][0])}</h3>
+            <p>{escape_html(cards[1][1])}</p>
           </article>
           <article>
-            <h3>Launch Ready</h3>
-            <p>Prepare clean files, metadata, and a preview path before publishing.</p>
+            <h3>{escape_html(cards[2][0])}</h3>
+            <p>{escape_html(cards[2][1])}</p>
           </article>
         </div>
       </section>
@@ -271,15 +391,15 @@ def write_static_project(root: Path, spec: SiteSpec) -> None:
         <p class="eyebrow">Process</p>
         <h2>A simple path from idea to preview</h2>
         <ol>
-          <li>Clarify the brief and sitemap.</li>
-          <li>Create the design and content system.</li>
-          <li>Build, preview, QA, and revise.</li>
+          <li>{escape_html(process[0])}</li>
+          <li>{escape_html(process[1])}</li>
+          <li>{escape_html(process[2])}</li>
         </ol>
       </section>
 
       <section id="contact" class="section cta">
         <p class="eyebrow">Next step</p>
-        <h2>Ready to review the first version?</h2>
+        <h2>{escape_html(profile["final_heading"])}</h2>
         <p>Use this draft as the starting point for edits, preview, and deployment.</p>
         <a class="button" href="mailto:hello@example.com">Contact us</a>
       </section>
@@ -411,6 +531,19 @@ h2 {
   font-weight: 800;
 }
 
+.proof {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-block: 1px solid #d9e2ec;
+  background: #ffffff;
+}
+
+.proof span {
+  padding: 22px;
+  text-align: center;
+  font-weight: 800;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -462,6 +595,11 @@ ol {
 
 
 def write_nextjs_project(root: Path, spec: SiteSpec) -> None:
+    profile = template_profile(spec)
+    capabilities = json.dumps([card[0] for card in profile["cards"]])
+    card_descriptions = json.dumps({card[0]: card[1] for card in profile["cards"]})
+    proof = json.dumps(profile["proof"])
+    process = profile["process"]
     write_text(
         root / "package.json",
         f"""{{
@@ -512,7 +650,9 @@ export default function RootLayout({{
     )
     write_text(
         root / "app" / "page.tsx",
-        f"""const capabilities = ["Positioning", "Conversion", "Launch Ready"];
+        f"""const capabilities = {capabilities};
+const capabilityDescriptions: Record<string, string> = {card_descriptions};
+const proof = {proof};
 
 export default function Home() {{
   return (
@@ -527,20 +667,26 @@ export default function Home() {{
       </header>
 
       <section id="top" className="hero">
-        <p className="eyebrow">{escape_js(spec.tone)} website experience</p>
-        <h1>{escape_js(spec.name)} helps {escape_js(spec.audience)} move faster.</h1>
+        <p className="eyebrow">{escape_js(profile["eyebrow"])}</p>
+        <h1>{escape_js(profile["hero"])}</h1>
         <p>{escape_js(spec.description)}</p>
         <a className="button" href="#contact">{escape_js(spec.goal)}</a>
       </section>
 
+      <section className="proof" aria-label="Key strengths">
+        {{proof.map((item) => (
+          <span key={{item}}>{{item}}</span>
+        ))}}
+      </section>
+
       <section id="services" className="section">
-        <p className="eyebrow">Capabilities</p>
-        <h2>Built around the customer journey</h2>
+        <p className="eyebrow">{escape_js(profile["section_eyebrow"])}</p>
+        <h2>{escape_js(profile["section_heading"])}</h2>
         <div className="grid">
           {{capabilities.map((item) => (
             <article key={{item}}>
               <h3>{{item}}</h3>
-              <p>Clear structure, conversion-focused copy, and responsive implementation for the first preview.</p>
+              <p>{{capabilityDescriptions[item]}}</p>
             </article>
           ))}}
         </div>
@@ -550,15 +696,15 @@ export default function Home() {{
         <p className="eyebrow">Process</p>
         <h2>A simple path from idea to preview</h2>
         <ol>
-          <li>Clarify the brief and sitemap.</li>
-          <li>Create the design and content system.</li>
-          <li>Build, preview, QA, and revise.</li>
+          <li>{escape_js(process[0])}</li>
+          <li>{escape_js(process[1])}</li>
+          <li>{escape_js(process[2])}</li>
         </ol>
       </section>
 
       <section id="contact" className="section cta">
         <p className="eyebrow">Next step</p>
-        <h2>Ready to review the first version?</h2>
+        <h2>{escape_js(profile["final_heading"])}</h2>
         <p>Use this draft as the starting point for edits, preview, and deployment.</p>
         <a className="button" href="mailto:hello@example.com">Contact us</a>
       </section>
@@ -713,6 +859,10 @@ article {
   }
 
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proof {
     grid-template-columns: 1fr;
   }
 }
@@ -1943,6 +2093,7 @@ def record_project_created(project_dir: Path, spec: SiteSpec) -> None:
         "goal": spec.goal,
         "tone": spec.tone,
         "platform": spec.platform,
+        "template": spec.template,
         "slug": spec.slug,
         "createdAt": state.get("project", {}).get("createdAt") or datetime.now(timezone.utc).isoformat(),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -2069,6 +2220,12 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--goal", default="Book a consultation", help="Primary conversion goal or CTA.")
     create.add_argument("--tone", default="professional", help="Brand tone.")
     create.add_argument("--platform", choices=("auto", "static", "nextjs"), default="auto")
+    create.add_argument(
+        "--template",
+        choices=("auto", "local-service", "restaurant", "saas", "consultant", "ecommerce", "portfolio"),
+        default="auto",
+        help="Website template profile to use.",
+    )
     create.add_argument("--output-dir", default="generated-sites", help="Directory where the site folder is created.")
     create.add_argument("--port", type=int, default=DEFAULT_PORT)
     create.add_argument("--force", action="store_true", help="Update files if the output project already exists.")

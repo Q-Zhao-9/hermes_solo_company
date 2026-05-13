@@ -82,6 +82,84 @@ def test_create_nextjs_site_for_app_description(tmp_path):
     assert result["preview"]["command"] == "npm run dev -- --hostname 0.0.0.0 --port 3010"
 
 
+def test_create_site_auto_selects_restaurant_template(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Bistro",
+        "--description",
+        "Neighborhood restaurant with seasonal menu and private dining.",
+        "--audience",
+        "local diners",
+        "--goal",
+        "Reserve a table",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    project_dir = Path(result["projectDir"])
+    html = (project_dir / "index.html").read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    brief = (project_dir / "docs" / "website-brief.md").read_text(encoding="utf-8")
+    assert result["ok"] is True
+    assert result["template"] == "restaurant"
+    assert "Restaurant website" in html
+    assert "Menu highlights" in html
+    assert "Reserve a table" in html
+    assert "## Template\nrestaurant" in brief
+    assert state["project"]["template"] == "restaurant"
+
+
+def test_create_site_explicit_portfolio_template(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Mira Chen",
+        "--description",
+        "Independent product designer portfolio for selected case studies.",
+        "--audience",
+        "startup founders",
+        "--goal",
+        "Start a collaboration",
+        "--platform",
+        "static",
+        "--template",
+        "portfolio",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    html = (Path(result["projectDir"]) / "index.html").read_text(encoding="utf-8")
+    assert result["template"] == "portfolio"
+    assert "Portfolio website" in html
+    assert "Featured work" in html
+    assert "Case studies" in html
+
+
+def test_create_nextjs_uses_saas_template_content(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Portal",
+        "--description",
+        "SaaS dashboard with login for operations teams.",
+        "--audience",
+        "operations managers",
+        "--goal",
+        "Request a demo",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    page = (Path(result["projectDir"]) / "app" / "page.tsx").read_text(encoding="utf-8")
+    assert result["template"] == "saas"
+    assert "SaaS website" in page
+    assert "Product value" in page
+    assert "Product confidence" in page
+
+
 def test_build_preview_detects_static_project(tmp_path):
     project_dir = tmp_path / "site"
     project_dir.mkdir()
@@ -342,7 +420,7 @@ def test_edit_section_updates_static_site_and_records_revision(tmp_path):
     assert "Premium dental care for busy families" in html
     assert "A calm, modern clinic experience" in html
     assert "Schedule today" in html
-    assert '<p class="eyebrow">professional website experience</p>' in html
+    assert '<p class="eyebrow">Local service website</p>' in html
     assert state["lastRevision"]["type"] == "edit-section"
     assert state["lastRevision"]["request"] == "make hero more premium"
 
@@ -410,7 +488,7 @@ def test_edit_section_updates_nextjs_page(tmp_path):
     assert "Operations clarity in one workspace" in page
     assert "A faster way to coordinate teams" in page
     assert "Start your demo" in page
-    assert '<p className="eyebrow">professional website experience</p>' in page
+    assert '<p className="eyebrow">SaaS website</p>' in page
 
 
 def test_deploy_prep_static_zip_records_history(tmp_path):

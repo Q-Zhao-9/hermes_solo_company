@@ -20,7 +20,7 @@ marketing site.
 2. For a fast static or Next.js first draft, use:
 
    ```bash
-   scripts/website_agency.py create-site --name "<offer/site name>" --description "<landing page offer>" --audience "<target customer>" --goal "<CTA>" --platform static
+   scripts/website_agency.py create-site --name "<offer/site name>" --description "<landing page offer>" --audience "<target customer>" --goal "<CTA>" --platform static --template auto
    ```
 
 3. Use `website-agency-orchestrator` for structure and platform routing.

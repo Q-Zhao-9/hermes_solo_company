@@ -44,6 +44,7 @@ Hermes skills may use these deterministic helpers:
 
 ```bash
 scripts/website_agency.py create-site --name "Acme Dental" --description "Family dental clinic" --platform static
+scripts/website_agency.py create-site --name "Acme Bistro" --description "Neighborhood restaurant with seasonal menu" --template restaurant
 scripts/website_agency.py preview-share --project-dir generated-sites/acme-dental --prefer hermesproxy
 scripts/website_agency.py list-sections --project-dir generated-sites/acme-dental
 scripts/website_agency.py edit-section --project-dir generated-sites/acme-dental --section top --heading "Premium dental care"
@@ -81,6 +82,24 @@ This records:
 - visual QA reports
 - edit/style revisions
 - deployment preparation
+
+## Templates
+
+The generator supports these first-draft templates:
+
+- `local-service`
+- `restaurant`
+- `saas`
+- `consultant`
+- `ecommerce`
+- `portfolio`
+
+Use `--template auto` to infer the template from the business description, or
+pass an explicit template:
+
+```bash
+scripts/website_agency.py create-site --name "Acme Bistro" --description "Neighborhood restaurant with seasonal menu" --template restaurant
+```
 
 ## Discord Summary
 
