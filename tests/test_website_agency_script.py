@@ -3,6 +3,7 @@ import argparse
 import json
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 
@@ -410,3 +411,64 @@ def test_edit_section_updates_nextjs_page(tmp_path):
     assert "A faster way to coordinate teams" in page
     assert "Start your demo" in page
     assert '<p className="eyebrow">professional website experience</p>' in page
+
+
+def test_deploy_prep_static_zip_records_history(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script("deploy-prep", "--project-dir", str(project_dir), "--target", "static-zip")
+
+    artifact = Path(result["artifact"])
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["target"] == "static-zip"
+    assert artifact.exists()
+    with zipfile.ZipFile(artifact) as archive:
+        names = set(archive.namelist())
+    assert "index.html" in names
+    assert "styles.css" in names
+    assert Path(result["notesPath"]).exists()
+    assert state["lastDeployment"]["target"] == "static-zip"
+
+
+def test_deploy_prep_nextjs_vercel_settings(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Portal",
+        "--description",
+        "SaaS dashboard with login for operations teams.",
+        "--audience",
+        "operations managers",
+        "--goal",
+        "Request a demo",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script("deploy-prep", "--project-dir", str(project_dir), "--target", "vercel")
+
+    settings = json.loads(Path(result["artifact"]).read_text(encoding="utf-8"))
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["target"] == "vercel"
+    assert settings["framework"] == "Next.js"
+    assert settings["buildCommand"] == "npm run build"
+    assert "vercel deploy" in result["commands"]
+    assert state["lastDeployment"]["target"] == "vercel"

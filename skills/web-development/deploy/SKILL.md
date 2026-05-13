@@ -15,3 +15,9 @@ Use this skill when the user invokes `/deploy`.
 Follow `deploy-site` and `website-qa-deploy`. Confirm the target host and get
 clear approval before production changes, credential use, billing actions, or
 publishing WordPress/Shopify changes live.
+
+For static HTML and Next.js preparation, prefer:
+
+```bash
+scripts/website_agency.py deploy-prep --project-dir "<project dir>" --target auto
+```

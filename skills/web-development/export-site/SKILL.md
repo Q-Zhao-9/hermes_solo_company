@@ -17,7 +17,13 @@ files for handoff or deployment.
 
 1. Identify the desired export target: static HTML, Next.js repo, WordPress,
    Shopify theme/assets, or content package.
-2. Build or collect the necessary files without unrelated generated clutter.
-3. Include environment variable, build, hosting, and upload notes.
-4. Run basic validation when practical.
-5. Return the export path and any limitations.
+2. For static HTML or Next.js handoff, use:
+
+   ```bash
+   scripts/website_agency.py deploy-prep --project-dir "<project dir>" --target auto
+   ```
+
+3. Build or collect the necessary files without unrelated generated clutter.
+4. Include environment variable, build, hosting, and upload notes.
+5. Run basic validation when practical.
+6. Return the export path and any limitations.

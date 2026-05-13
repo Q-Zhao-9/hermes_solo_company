@@ -15,8 +15,10 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ from typing import Any
 
 DEFAULT_PORT = 3010
 STATE_PATH = Path("docs") / "hermes-website-state.json"
+DEPLOY_DIR = Path("dist") / "hermes-deploy"
 
 
 @dataclass(frozen=True)
@@ -764,6 +767,201 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     if args.start:
         process = start_preview_process(project_dir, plan["command"], args.log_file)
         result["process"] = process
+    return result
+
+
+def deploy_prep(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    platform = detect_platform(project_dir)
+    target = args.target
+    if target == "auto":
+        target = "static-zip" if platform == "static" else "vercel"
+
+    deploy_dir = project_dir / DEPLOY_DIR
+    deploy_dir.mkdir(parents=True, exist_ok=True)
+    if target == "static-zip":
+        result = prepare_static_zip(project_dir, deploy_dir)
+    elif target in {"vercel", "netlify"}:
+        result = prepare_node_hosting(project_dir, deploy_dir, target, platform)
+    elif target == "github-pages":
+        result = prepare_github_pages(project_dir, deploy_dir, platform)
+    else:
+        return {"ok": False, "error": f"Unsupported deploy target: {target}"}
+
+    deployment = {
+        "type": "deploy-prep",
+        "target": target,
+        "platform": platform,
+        "artifact": result.get("artifact"),
+        "notesPath": result.get("notesPath"),
+    }
+    record_deployment(project_dir, deployment)
+    result.update(
+        {
+            "ok": True,
+            "projectDir": str(project_dir),
+            "platform": platform,
+            "target": target,
+            "statePath": str(project_dir / STATE_PATH),
+        }
+    )
+    return result
+
+
+def prepare_static_zip(project_dir: Path, deploy_dir: Path) -> dict[str, Any]:
+    package_dir = deploy_dir / "static-site"
+    if package_dir.exists():
+        shutil.rmtree(package_dir)
+    package_dir.mkdir(parents=True, exist_ok=True)
+
+    include_names = ["index.html", "styles.css", "assets", "images", "public"]
+    copied: list[str] = []
+    for name in include_names:
+        source = project_dir / name
+        if not source.exists():
+            continue
+        dest = package_dir / name
+        if source.is_dir():
+            shutil.copytree(source, dest)
+        else:
+            shutil.copy2(source, dest)
+        copied.append(name)
+
+    notes_path = deploy_dir / "DEPLOYMENT.md"
+    write_text(
+        notes_path,
+        """# Static Website Deployment
+
+## Artifact
+
+Upload `static-site.zip` to static hosting, cPanel public_html, Netlify drag-and-drop,
+Vercel static import, S3, or GitHub Pages.
+
+## Checklist
+
+- Confirm the latest preview was approved.
+- Upload the zip contents, not the parent folder, when using cPanel/public_html.
+- Confirm the homepage loads as `/index.html`.
+- Re-run QA after deployment if the host rewrites links or paths.
+""",
+    )
+
+    zip_path = deploy_dir / "static-site.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(package_dir.rglob("*")):
+            if path.is_file():
+                archive.write(path, path.relative_to(package_dir))
+
+    return {
+        "artifact": str(zip_path),
+        "packageDir": str(package_dir),
+        "notesPath": str(notes_path),
+        "files": copied,
+        "commands": ["unzip static-site.zip", "upload contents to your static host"],
+    }
+
+
+def prepare_node_hosting(project_dir: Path, deploy_dir: Path, target: str, platform: str) -> dict[str, Any]:
+    if platform not in {"nextjs", "node"}:
+        return {
+            "artifact": "",
+            "notesPath": str(deploy_dir / "DEPLOYMENT.md"),
+            "warning": f"{target} prep is intended for Next.js/Node projects; detected {platform}.",
+            "commands": [],
+        }
+
+    build_command = "npm run build"
+    dev_command = "npm run dev"
+    install_command = "npm install"
+    if target == "vercel":
+        settings = {
+            "framework": "Next.js",
+            "installCommand": install_command,
+            "buildCommand": build_command,
+            "outputDirectory": ".next",
+            "devCommand": dev_command,
+        }
+        commands = ["npm install", "npm run build", "vercel deploy"]
+        title = "Vercel Deployment"
+    else:
+        settings = {
+            "framework": "Next.js",
+            "installCommand": install_command,
+            "buildCommand": build_command,
+            "publishDirectory": ".next",
+        }
+        commands = ["npm install", "npm run build", "netlify deploy --build"]
+        title = "Netlify Deployment"
+
+    settings_path = deploy_dir / f"{target}-settings.json"
+    write_text(settings_path, json.dumps(settings, indent=2))
+    notes_path = deploy_dir / "DEPLOYMENT.md"
+    write_text(
+        notes_path,
+        f"""# {title}
+
+## Recommended Settings
+
+See `{settings_path.name}`.
+
+## Commands
+
+```bash
+{chr(10).join(commands)}
+```
+
+## Checklist
+
+- Confirm environment variables before deploying.
+- Run `scripts/website_agency.py qa --project-dir . --run-build` before publish.
+- Use preview deployment first when possible.
+- Do not connect production domains until the user approves the preview.
+""",
+    )
+    return {
+        "artifact": str(settings_path),
+        "notesPath": str(notes_path),
+        "settings": settings,
+        "commands": commands,
+    }
+
+
+def prepare_github_pages(project_dir: Path, deploy_dir: Path, platform: str) -> dict[str, Any]:
+    if platform != "static":
+        notes = "GitHub Pages prep currently supports static HTML projects only."
+        notes_path = deploy_dir / "DEPLOYMENT.md"
+        write_text(notes_path, f"# GitHub Pages Deployment\n\n{notes}\n")
+        return {"artifact": "", "notesPath": str(notes_path), "warning": notes, "commands": []}
+
+    result = prepare_static_zip(project_dir, deploy_dir)
+    notes_path = deploy_dir / "DEPLOYMENT.md"
+    write_text(
+        notes_path,
+        """# GitHub Pages Deployment
+
+## Artifact
+
+Use `static-site.zip` or commit the static files directly to a repository.
+
+## Repository Setup
+
+1. Put `index.html`, `styles.css`, and assets at the repository root, or in `/docs`.
+2. In GitHub, open Settings -> Pages.
+3. Select the branch and folder that contains `index.html`.
+4. Wait for the Pages URL to publish.
+
+## Checklist
+
+- Confirm the latest preview was approved.
+- Confirm all local links work after publishing.
+""",
+    )
+    result["notesPath"] = str(notes_path)
+    result["commands"] = ["commit static files", "enable GitHub Pages in repository settings"]
     return result
 
 
@@ -1574,6 +1772,17 @@ def record_revision(project_dir: Path, revision: dict[str, Any]) -> None:
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_deployment(project_dir: Path, deployment: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    deployments = state.setdefault("deployments", [])
+    record = dict(deployment)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    deployments.append(record)
+    state["lastDeployment"] = record
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def read_state(state_file: Path) -> dict[str, Any]:
     if not state_file.exists():
         return {"version": 1, "previews": []}
@@ -1649,6 +1858,16 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--start", action="store_true", help="Start the preview process in the background.")
     preview.add_argument("--log-file", help="Log file for --start.")
     preview.set_defaults(func=build_preview)
+
+    deploy = subparsers.add_parser("deploy-prep", help="Prepare deployment artifacts and notes.")
+    deploy.add_argument("--project-dir", default=".", help="Website project directory.")
+    deploy.add_argument(
+        "--target",
+        choices=("auto", "static-zip", "vercel", "netlify", "github-pages"),
+        default="auto",
+        help="Deployment target to prepare.",
+    )
+    deploy.set_defaults(func=deploy_prep)
 
     sections = subparsers.add_parser("list-sections", help="List editable sections in a generated website.")
     sections.add_argument("--project-dir", default=".", help="Website project directory.")
