@@ -53,6 +53,8 @@ scripts/website_agency.py qa --project-dir generated-sites/acme-dental
 scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental
 scripts/website_agency.py deploy-prep --project-dir generated-sites/acme-dental --target auto
 scripts/website_agency.py summary --project-dir generated-sites/acme-dental
+scripts/website_agency.py wordpress-package --project-dir generated-sites/acme-dental --title "Home" --slug home
+scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
 ```
 
 ## Preview Sharing
@@ -82,6 +84,25 @@ This records:
 - visual QA reports
 - edit/style revisions
 - deployment preparation
+- WordPress package and preview events
+
+## WordPress
+
+Prepare a generated site/page for WordPress:
+
+```bash
+scripts/website_agency.py wordpress-package --project-dir generated-sites/acme-dental --title "Home" --slug home --status draft
+```
+
+Preview it through Sitelet before publishing:
+
+```bash
+scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
+```
+
+This creates Gutenberg-style content in `dist/hermes-wordpress/`, records the
+event in `docs/hermes-website-state.json`, and keeps production publishing as a
+separate approval step.
 
 ## Templates
 

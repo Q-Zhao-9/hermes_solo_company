@@ -625,3 +625,111 @@ def test_summary_returns_discord_friendly_status(tmp_path):
     assert "QA:" in result["summary"]
     assert "Visual QA:" in result["summary"]
     assert "Deploy artifact:" in result["summary"]
+
+
+def test_wordpress_package_generates_draft_files_and_history(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "wordpress-package",
+        "--project-dir",
+        str(project_dir),
+        "--title",
+        "Family Dental Services",
+        "--slug",
+        "family-dental-services",
+        "--site-name",
+        "Acme WP",
+        "--excerpt",
+        "Dental service overview",
+    )
+
+    content = Path(result["contentFile"]).read_text(encoding="utf-8")
+    spec = json.loads(Path(result["specPath"]).read_text(encoding="utf-8"))
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert "<!-- wp:heading -->" in content
+    assert spec["title"] == "Family Dental Services"
+    assert spec["slug"] == "family-dental-services"
+    assert state["lastWordPress"]["type"] == "wordpress-package"
+    assert state["lastWordPress"]["slug"] == "family-dental-services"
+
+
+def test_wordpress_preview_uses_package_and_records_history(tmp_path, monkeypatch):
+    module = load_module()
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    package = run_script(
+        "wordpress-package",
+        "--project-dir",
+        str(project_dir),
+        "--title",
+        "Family Dental Services",
+        "--slug",
+        "family-dental-services",
+    )
+
+    calls = {}
+
+    def fake_publish(**kwargs):
+        calls.update(kwargs)
+        return {
+            "ok": True,
+            "siteletUrl": "https://sitelet.example/sitelet/wp-1",
+            "generatedUrl": "https://sitelet.example/generated/wp-1",
+        }
+
+    monkeypatch.setattr(module, "publish_wordpress_preview", fake_publish)
+    result = module.wordpress_preview(
+        argparse.Namespace(
+            project_dir=str(project_dir),
+            spec=package["specPath"],
+            title="",
+            slug="",
+            status="",
+            site_name="Acme WP",
+            excerpt="",
+            content="",
+            content_file="",
+            sitelet_base_url="https://sitelet.example",
+            sitelet_api_token="token",
+        )
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["preview"]["siteletUrl"] == "https://sitelet.example/sitelet/wp-1"
+    assert calls["title"] == "Family Dental Services"
+    assert calls["slug"] == "family-dental-services"
+    assert "<!-- wp:heading -->" in calls["content"]
+    assert state["lastWordPress"]["type"] == "wordpress-preview"
+    assert state["lastWordPress"]["siteletUrl"] == "https://sitelet.example/sitelet/wp-1"

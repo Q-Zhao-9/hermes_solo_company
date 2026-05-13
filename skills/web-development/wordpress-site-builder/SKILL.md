@@ -36,17 +36,29 @@ Use `multi-site-manager` when more than one WordPress site exists.
 ## Build Workflow
 
 1. Use `website-brief-generator` and `website-design-system`.
-2. Create page/post specs:
+2. For static/Next.js generated projects, create a WordPress-ready package:
+
+   ```bash
+   scripts/website_agency.py wordpress-package --project-dir "<project dir>" --title "<page title>" --slug "<page-slug>" --status draft
+   ```
+
+3. Preview the package through Sitelet:
+
+   ```bash
+   scripts/website_agency.py wordpress-preview --project-dir "<project dir>" --spec "dist/hermes-wordpress/<page-slug>.json"
+   ```
+
+4. Create page/post specs:
    - title
    - slug
    - SEO title/meta
    - Gutenberg/block HTML or clean semantic HTML
    - CTA and internal links
-3. Call `wordpress_preview_publish` for pre-deploy preview when content is ready.
-4. Share the Sitelet preview URL.
-5. After user approval, use the WordPress MCP tools to create/update content.
-6. Prefer `draft` or `pending` status unless the user explicitly says publish.
-7. Report page ID, status, edit URL/public URL, and preview URL.
+5. Call `wordpress_preview_publish` for pre-deploy preview when content is ready.
+6. Share the Sitelet preview URL.
+7. After user approval, use the WordPress MCP tools to create/update content.
+8. Prefer `draft` or `pending` status unless the user explicitly says publish.
+9. Report page ID, status, edit URL/public URL, and preview URL.
 
 ## WordPress MCP Pattern
 

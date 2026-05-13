@@ -27,6 +27,7 @@ from typing import Any
 DEFAULT_PORT = 3010
 STATE_PATH = Path("docs") / "hermes-website-state.json"
 DEPLOY_DIR = Path("dist") / "hermes-deploy"
+WORDPRESS_DIR = Path("dist") / "hermes-wordpress"
 
 
 @dataclass(frozen=True)
@@ -1165,6 +1166,212 @@ def deploy_prep(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def wordpress_package(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    title = args.title or infer_project_title(project_dir)
+    slug = args.slug or slugify(title)
+    content = resolve_wordpress_content(project_dir, args.content, args.content_file)
+    if not content.strip():
+        return {"ok": False, "error": "No WordPress content could be generated."}
+
+    wp_dir = project_dir / WORDPRESS_DIR
+    wp_dir.mkdir(parents=True, exist_ok=True)
+    content_path = wp_dir / f"{slug}.html"
+    spec_path = wp_dir / f"{slug}.json"
+    notes_path = wp_dir / "WORDPRESS.md"
+    write_text(content_path, content)
+    spec = {
+        "title": title,
+        "slug": slug,
+        "status": args.status,
+        "siteName": args.site_name,
+        "excerpt": args.excerpt,
+        "contentFile": str(content_path.relative_to(project_dir)),
+        "sourceProject": str(project_dir),
+    }
+    write_text(spec_path, json.dumps(spec, indent=2))
+    write_text(
+        notes_path,
+        f"""# WordPress Draft Package
+
+## Page
+
+- Title: {title}
+- Slug: {slug}
+- Status: {args.status}
+- Content: `{content_path.relative_to(project_dir)}`
+- Spec: `{spec_path.relative_to(project_dir)}`
+
+## Workflow
+
+1. Preview this draft with `wordpress-preview`.
+2. Review the Sitelet URL with the user.
+3. After approval, create or update the WordPress page as `{args.status}`.
+4. Do not publish live unless the user explicitly approves production publish.
+""",
+    )
+    record_wordpress(
+        project_dir,
+        {
+            "type": "wordpress-package",
+            "title": title,
+            "slug": slug,
+            "status": args.status,
+            "contentFile": str(content_path.relative_to(project_dir)),
+            "specPath": str(spec_path.relative_to(project_dir)),
+        },
+    )
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "title": title,
+        "slug": slug,
+        "status": args.status,
+        "contentFile": str(content_path),
+        "specPath": str(spec_path),
+        "notesPath": str(notes_path),
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def wordpress_preview(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    title = args.title
+    slug = args.slug
+    status = args.status
+    excerpt = args.excerpt
+    content = ""
+    if args.spec:
+        spec_path = Path(args.spec).expanduser()
+        if not spec_path.is_absolute():
+            spec_path = project_dir / spec_path
+        if not spec_path.exists():
+            return {"ok": False, "error": f"WordPress spec does not exist: {spec_path}"}
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        title = title or spec.get("title", "")
+        slug = slug or spec.get("slug", "")
+        status = status or spec.get("status", "draft")
+        excerpt = excerpt or spec.get("excerpt", "")
+        content_file = spec.get("contentFile", "")
+        if content_file:
+            content_path = project_dir / content_file
+            content = content_path.read_text(encoding="utf-8") if content_path.exists() else ""
+    content = resolve_wordpress_content(project_dir, args.content or content, args.content_file)
+    if not title:
+        title = infer_project_title(project_dir)
+    if not slug:
+        slug = slugify(title)
+    if not content.strip():
+        return {"ok": False, "error": "WordPress preview content is empty."}
+
+    result = publish_wordpress_preview(
+        title=title,
+        content=content,
+        site_name=args.site_name,
+        slug=slug,
+        excerpt=excerpt,
+        status=status or "draft",
+        base_url=args.sitelet_base_url,
+        api_token=args.sitelet_api_token,
+    )
+    record = {
+        "type": "wordpress-preview",
+        "title": title,
+        "slug": slug,
+        "status": status or "draft",
+        "siteletUrl": result.get("siteletUrl"),
+        "generatedUrl": result.get("generatedUrl"),
+        "ok": bool(result.get("ok")),
+    }
+    record_wordpress(project_dir, record)
+    return {
+        "ok": bool(result.get("ok")),
+        "projectDir": str(project_dir),
+        "title": title,
+        "slug": slug,
+        "status": status or "draft",
+        "preview": result,
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def resolve_wordpress_content(project_dir: Path, content: str, content_file: str) -> str:
+    if content_file:
+        path = Path(content_file).expanduser()
+        if not path.is_absolute():
+            path = project_dir / path
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    if content and content.strip():
+        return content
+    return generate_wordpress_content_from_project(project_dir)
+
+
+def generate_wordpress_content_from_project(project_dir: Path) -> str:
+    platform = detect_platform(project_dir)
+    source_path = primary_page_path(project_dir, platform)
+    if source_path:
+        sections = extract_sections(source_path, platform)
+        if sections:
+            parts = []
+            for section in sections:
+                heading = section.get("heading", "").strip()
+                body = section.get("body", "").strip()
+                if heading:
+                    parts.append(f"<!-- wp:heading --><h2>{escape_html(heading)}</h2><!-- /wp:heading -->")
+                if body:
+                    parts.append(f"<!-- wp:paragraph --><p>{escape_html(body)}</p><!-- /wp:paragraph -->")
+            if parts:
+                return "\n\n".join(parts)
+    content_plan = project_dir / "docs" / "content-plan.md"
+    if content_plan.exists():
+        text = content_plan.read_text(encoding="utf-8")
+        paragraphs = [line.strip("-# ") for line in text.splitlines() if line.strip() and not line.startswith("#")]
+        return "\n\n".join(f"<!-- wp:paragraph --><p>{escape_html(item)}</p><!-- /wp:paragraph -->" for item in paragraphs)
+    return ""
+
+
+def infer_project_title(project_dir: Path) -> str:
+    state = read_state(project_dir / STATE_PATH)
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    if project.get("name"):
+        return str(project["name"])
+    return project_dir.name.replace("-", " ").title()
+
+
+def publish_wordpress_preview(
+    title: str,
+    content: str,
+    site_name: str,
+    slug: str,
+    excerpt: str,
+    status: str,
+    base_url: str,
+    api_token: str,
+) -> dict[str, Any]:
+    try:
+        from tools.sitelet_tool import wordpress_preview_publish
+
+        raw = wordpress_preview_publish(
+            title=title,
+            content=content,
+            site_name=site_name or "WordPress Preview",
+            slug=slug,
+            excerpt=excerpt,
+            status=status,
+            base_url=base_url or os.getenv("SITELET_BASE_URL", ""),
+            api_token=api_token or os.getenv("SITELET_API_TOKEN", ""),
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    parsed = parse_json_output(raw)
+    return parsed or {"ok": False, "error": raw}
+
+
 def prepare_static_zip(project_dir: Path, deploy_dir: Path) -> dict[str, Any]:
     package_dir = deploy_dir / "static-site"
     if package_dir.exists():
@@ -2139,6 +2346,17 @@ def record_deployment(project_dir: Path, deployment: dict[str, Any]) -> None:
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_wordpress(project_dir: Path, event: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    events = state.setdefault("wordpress", [])
+    record = dict(event)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    events.append(record)
+    state["lastWordPress"] = record
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def record_visual_qa(project_dir: Path, report: dict[str, Any]) -> None:
     state_file = project_dir / STATE_PATH
     state = read_state(state_file)
@@ -2247,6 +2465,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deployment target to prepare.",
     )
     deploy.set_defaults(func=deploy_prep)
+
+    wp_package = subparsers.add_parser("wordpress-package", help="Create a WordPress-ready draft package.")
+    wp_package.add_argument("--project-dir", default=".", help="Website project directory.")
+    wp_package.add_argument("--title", default="", help="WordPress page/post title.")
+    wp_package.add_argument("--slug", default="", help="WordPress slug.")
+    wp_package.add_argument("--status", default="draft", help="Proposed WordPress status, usually draft or pending.")
+    wp_package.add_argument("--site-name", default="WordPress Preview", help="Target WordPress site name.")
+    wp_package.add_argument("--excerpt", default="", help="Optional WordPress excerpt.")
+    wp_package.add_argument("--content", default="", help="Explicit WordPress/Gutenberg HTML content.")
+    wp_package.add_argument("--content-file", default="", help="File containing WordPress/Gutenberg HTML content.")
+    wp_package.set_defaults(func=wordpress_package)
+
+    wp_preview = subparsers.add_parser("wordpress-preview", help="Publish a WordPress draft package to Sitelet preview.")
+    wp_preview.add_argument("--project-dir", default=".", help="Website project directory.")
+    wp_preview.add_argument("--spec", default="", help="WordPress package JSON path, relative to project dir if needed.")
+    wp_preview.add_argument("--title", default="", help="Override WordPress title.")
+    wp_preview.add_argument("--slug", default="", help="Override WordPress slug.")
+    wp_preview.add_argument("--status", default="", help="Override WordPress status.")
+    wp_preview.add_argument("--site-name", default="WordPress Preview", help="Target WordPress site name.")
+    wp_preview.add_argument("--excerpt", default="", help="Optional WordPress excerpt.")
+    wp_preview.add_argument("--content", default="", help="Explicit WordPress/Gutenberg HTML content.")
+    wp_preview.add_argument("--content-file", default="", help="File containing WordPress/Gutenberg HTML content.")
+    wp_preview.add_argument("--sitelet-base-url", default=os.getenv("SITELET_BASE_URL", ""))
+    wp_preview.add_argument("--sitelet-api-token", default=os.getenv("SITELET_API_TOKEN", ""))
+    wp_preview.set_defaults(func=wordpress_preview)
 
     sections = subparsers.add_parser("list-sections", help="List editable sections in a generated website.")
     sections.add_argument("--project-dir", default=".", help="Website project directory.")
