@@ -1,11 +1,11 @@
 ---
 name: website-qa-deploy
 description: Run professional website QA and deployment preparation: build, lint, responsive checks, accessibility, SEO, broken links, forms, analytics, preview URLs, GitHub workflow, and deployment steps.
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     tags: [web-development, qa, deploy, vercel, netlify, github, seo]
-    related_skills: [website-agency-orchestrator, hermes-proxy-server, sitelet-cloud-render, github-pr-workflow]
+    related_skills: [website-agency-orchestrator, hermes-proxy-server, sitelet-cloud-render, wordpress-site-builder, shopify-site-builder, github-pr-workflow]
 ---
 
 # Website QA Deploy
@@ -27,6 +27,7 @@ Run what applies to the project:
 - forms: action, validation, success/failure behavior
 - analytics pixels only when configured by the user
 - no secrets in client code or static exports
+- platform-specific checks for WordPress and Shopify when applicable
 
 Write findings to:
 
@@ -47,6 +48,20 @@ docs/qa-report.md
 - **WordPress**: staging or production WordPress server after preview approval.
 - **Shopify**: theme or app extension workflow; do not modify checkout without
   explicit scope.
+
+## WordPress QA
+
+- preview proposed page/post with `wordpress_preview_publish` before publishing
+- verify target site, page/post ID, slug, and status
+- check plugin dependencies for forms, SEO, WooCommerce, security, backup
+- prefer draft/staging updates before production
+
+## Shopify QA
+
+- use a duplicate/development theme when possible
+- check Liquid syntax or theme build tools when available
+- verify product variants, add-to-cart flow, price display, image alt text
+- do not touch checkout/payment/tax/shipping without explicit approval
 
 ## GitHub Workflow
 

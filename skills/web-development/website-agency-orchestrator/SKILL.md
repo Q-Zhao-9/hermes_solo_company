@@ -1,11 +1,11 @@
 ---
 name: website-agency-orchestrator
 description: Run a professional AI web agency workflow for creating or improving websites: intake, brief, sitemap, design system, platform routing, Codex implementation, preview, QA, revisions, and deployment.
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     tags: [web-development, website-builder, agency, codex, planning, preview]
-    related_skills: [website-brief-generator, website-design-system, website-seo-content, nextjs-site-builder, static-html-site-builder, website-visual-editor, website-qa-deploy, hermes-proxy-server, sitelet-cloud-render, multi-site-manager]
+    related_skills: [website-brief-generator, website-design-system, website-seo-content, nextjs-site-builder, static-html-site-builder, wordpress-site-builder, shopify-site-builder, website-visual-editor, website-qa-deploy, hermes-proxy-server, sitelet-cloud-render, multi-site-manager]
 ---
 
 # Website Agency Orchestrator
@@ -53,15 +53,24 @@ Minimum inputs:
 - **WordPress**: content-heavy business sites, blogs, editable marketing pages.
 - **Shopify**: ecommerce storefronts, product pages, collections, theme work.
 
-Start MVP work with Static HTML or Next.js unless the user asks for WordPress or
-Shopify.
+Default to:
+
+- Static HTML for quick landing pages.
+- Next.js for custom professional product sites.
+- WordPress when the user needs business-owner editing, blogs, content volume,
+  plugins, or WooCommerce.
+- Shopify when the core job is ecommerce/storefront conversion.
 
 ## Build Workflow
 
 1. Use `website-brief-generator` to create the professional requirement brief.
 2. Use `website-design-system` to define visual rules.
 3. Use `website-seo-content` for content, metadata, CTAs, FAQ, and schema.
-4. Route implementation to `nextjs-site-builder` or `static-html-site-builder`.
+4. Route implementation to the selected platform skill:
+   - `nextjs-site-builder`
+   - `static-html-site-builder`
+   - `wordpress-site-builder`
+   - `shopify-site-builder`
 5. Use Codex-style file edits in the selected project directory.
 6. Run build/lint/tests when available.
 7. Use `hermes-proxy-server` for local live preview or `sitelet-cloud-render`
@@ -82,6 +91,8 @@ Map these user intents to the workflow:
 - `/fix-build`: diagnose and fix build errors.
 - `/deploy`: deploy or provide exact deployment steps.
 - `/export`: export HTML, Next.js repo, WordPress package, or Shopify theme.
+- `/setup-wordpress`: plan or build a WordPress site/page workflow.
+- `/setup-shopify`: plan or edit a Shopify storefront/theme workflow.
 
 ## Response Pattern
 
