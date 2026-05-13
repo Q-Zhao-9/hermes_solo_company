@@ -49,7 +49,9 @@ scripts/website_agency.py list-sections --project-dir generated-sites/acme-denta
 scripts/website_agency.py edit-section --project-dir generated-sites/acme-dental --section top --heading "Premium dental care"
 scripts/website_agency.py change-style --project-dir generated-sites/acme-dental --preset luxury
 scripts/website_agency.py qa --project-dir generated-sites/acme-dental
+scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental
 scripts/website_agency.py deploy-prep --project-dir generated-sites/acme-dental --target auto
+scripts/website_agency.py summary --project-dir generated-sites/acme-dental
 ```
 
 ## Preview Sharing
@@ -76,8 +78,36 @@ This records:
 - project creation
 - preview links
 - QA reports
+- visual QA reports
 - edit/style revisions
 - deployment preparation
+
+## Discord Summary
+
+Use the summary helper when you want a compact response to paste or send back
+to Discord:
+
+```bash
+scripts/website_agency.py summary --project-dir generated-sites/acme-dental
+```
+
+It includes the latest preview URL, QA result, visual QA result, latest edit,
+and deployment artifact when available.
+
+## Visual QA
+
+Run source-based responsive checks:
+
+```bash
+scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental
+```
+
+If Playwright is installed and the local preview is running, screenshots can be
+captured:
+
+```bash
+scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental --screenshots --url http://127.0.0.1:3010/
+```
 
 ## Deployment Prep
 

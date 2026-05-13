@@ -28,6 +28,18 @@ verification:
 scripts/website_agency.py qa --project-dir "<project dir>" --run-build
 ```
 
+For responsive/source visual checks and optional screenshots, run:
+
+```bash
+scripts/website_agency.py visual-qa --project-dir "<project dir>"
+```
+
+If Playwright is installed and a preview URL is available:
+
+```bash
+scripts/website_agency.py visual-qa --project-dir "<project dir>" --screenshots --url "http://127.0.0.1:3010/"
+```
+
 Run what applies to the project:
 
 - install dependencies if needed
@@ -46,6 +58,7 @@ Write findings to:
 
 ```text
 docs/qa-report.md
+docs/visual-qa-report.md
 docs/hermes-website-state.json
 ```
 
@@ -94,3 +107,9 @@ Return:
 - preview URL
 - deployment command or platform steps
 - unresolved risks
+
+For Discord-friendly status, use:
+
+```bash
+scripts/website_agency.py summary --project-dir "<project dir>"
+```

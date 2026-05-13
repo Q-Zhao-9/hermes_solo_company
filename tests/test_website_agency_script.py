@@ -472,3 +472,78 @@ def test_deploy_prep_nextjs_vercel_settings(tmp_path):
     assert settings["buildCommand"] == "npm run build"
     assert "vercel deploy" in result["commands"]
     assert state["lastDeployment"]["target"] == "vercel"
+
+
+def test_visual_qa_passes_for_generated_static_site(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script("visual-qa", "--project-dir", str(project_dir))
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["summary"]["failures"] == 0
+    assert (project_dir / "docs" / "visual-qa-report.md").exists()
+    assert state["lastVisualQa"]["summary"]["failures"] == 0
+
+
+def test_visual_qa_reports_responsive_failures(tmp_path):
+    project_dir = tmp_path / "visual-broken"
+    project_dir.mkdir()
+    (project_dir / "index.html").write_text("<html><body><h1>Hello</h1></body></html>", encoding="utf-8")
+    (project_dir / "styles.css").write_text("h1 { width: 900px; letter-spacing: -1px; }", encoding="utf-8")
+
+    result = run_script("visual-qa", "--project-dir", str(project_dir), check=False)
+
+    failures = {check["name"] for check in result["checks"] if check["status"] == "fail"}
+    warnings = {check["name"] for check in result["checks"] if check["status"] == "warning"}
+    assert result["ok"] is False
+    assert "responsive-media-query" in failures
+    assert "button-touch-target" in failures
+    assert "no-negative-letter-spacing" in failures
+    assert "viewport-meta" in failures
+    assert "fixed-width-risk" in warnings
+
+
+def test_summary_returns_discord_friendly_status(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    run_script("qa", "--project-dir", str(project_dir))
+    run_script("visual-qa", "--project-dir", str(project_dir))
+    run_script("deploy-prep", "--project-dir", str(project_dir), "--target", "static-zip")
+
+    result = run_script("summary", "--project-dir", str(project_dir))
+
+    assert result["ok"] is True
+    assert "**Website Status: Acme Dental**" in result["summary"]
+    assert "QA:" in result["summary"]
+    assert "Visual QA:" in result["summary"]
+    assert "Deploy artifact:" in result["summary"]

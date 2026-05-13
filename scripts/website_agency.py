@@ -770,6 +770,211 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def visual_qa(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    platform = detect_platform(project_dir)
+    checks = check_visual_source(project_dir, platform)
+    screenshots: list[dict[str, Any]] = []
+    if args.screenshots:
+        screenshots = capture_playwright_screenshots(
+            url=args.url,
+            output_dir=Path(args.output_dir).expanduser().resolve() if args.output_dir else project_dir / "docs" / "screenshots",
+        )
+        checks.extend(screenshot_checks(screenshots))
+    summary = summarize_checks(checks)
+    report = {
+        "ok": summary["failures"] == 0,
+        "projectDir": str(project_dir),
+        "platform": platform,
+        "summary": summary,
+        "checks": checks,
+        "screenshots": screenshots,
+        "reportPath": str(project_dir / "docs" / "visual-qa-report.md"),
+        "statePath": str(project_dir / STATE_PATH),
+    }
+    write_visual_qa_report(project_dir, report)
+    record_visual_qa(project_dir, report)
+    return report
+
+
+def check_visual_source(project_dir: Path, platform: str) -> list[dict[str, Any]]:
+    page_path = primary_page_path(project_dir, platform)
+    css_path = primary_css_path(project_dir, platform)
+    page = read_optional(page_path) if page_path else ""
+    css = read_optional(css_path) if css_path else ""
+    checks = [
+        check_bool("stylesheet", bool(css), "Stylesheet found.", "No primary stylesheet was found."),
+        check_bool("responsive-media-query", "@media" in css, "Responsive media query found.", "No responsive media query found."),
+        check_bool(
+            "mobile-grid-collapse",
+            bool(re.search(r"@media[^{]+max-width[\s\S]+grid-template-columns\s*:\s*1fr", css)),
+            "Mobile grid collapse rule found.",
+            "No mobile grid collapse rule found.",
+        ),
+        check_bool(
+            "button-touch-target",
+            bool(re.search(r"min-height\s*:\s*(4[4-9]|[5-9]\d)px", css)),
+            "Button touch target minimum appears present.",
+            "No >=44px button touch target minimum found.",
+        ),
+        check_bool(
+            "no-negative-letter-spacing",
+            not re.search(r"letter-spacing\s*:\s*-\d", css),
+            "No negative letter spacing found.",
+            "Negative letter spacing found.",
+        ),
+    ]
+    fixed_widths = re.findall(r"\b(?:width|min-width)\s*:\s*(\d{3,})px", css)
+    checks.append(
+        {
+            "name": "fixed-width-risk",
+            "status": "warning" if fixed_widths else "pass",
+            "message": f"Large fixed widths found: {', '.join(fixed_widths[:5])}px" if fixed_widths else "No large fixed widths found.",
+        }
+    )
+    if platform == "static":
+        checks.append(
+            check_bool(
+                "viewport-meta",
+                'name="viewport"' in page or "name='viewport'" in page,
+                "Viewport meta tag found.",
+                "Viewport meta tag is missing.",
+            )
+        )
+    else:
+        checks.append(
+            {
+                "name": "viewport-meta",
+                "status": "skip",
+                "message": "Next.js manages viewport metadata at runtime unless explicitly configured.",
+            }
+        )
+    return checks
+
+
+def capture_playwright_screenshots(url: str, output_dir: Path) -> list[dict[str, Any]]:
+    if not url:
+        return [{"ok": False, "viewport": "all", "error": "--url is required when --screenshots is used."}]
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        return [{"ok": False, "viewport": "all", "error": f"Playwright is not available: {exc}"}]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    viewports = [
+        ("desktop", {"width": 1440, "height": 1000}),
+        ("mobile", {"width": 390, "height": 844}),
+    ]
+    captures = []
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            for name, viewport in viewports:
+                page = browser.new_page(viewport=viewport)
+                page.goto(url, wait_until="networkidle", timeout=15000)
+                path = output_dir / f"{name}.png"
+                page.screenshot(path=str(path), full_page=True)
+                captures.append({"ok": True, "viewport": name, "path": str(path), "url": url})
+                page.close()
+            browser.close()
+    except Exception as exc:
+        captures.append({"ok": False, "viewport": "all", "error": str(exc)})
+    return captures
+
+
+def screenshot_checks(screenshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not screenshots:
+        return []
+    return [
+        {
+            "name": f"screenshot:{item.get('viewport', 'unknown')}",
+            "status": "pass" if item.get("ok") else "warning",
+            "message": item.get("path") or item.get("error") or "Screenshot check finished.",
+        }
+        for item in screenshots
+    ]
+
+
+def write_visual_qa_report(project_dir: Path, report: dict[str, Any]) -> None:
+    lines = [
+        "# Visual QA Report",
+        "",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        f"Platform: {report['platform']}",
+        f"Status: {'PASS' if report['ok'] else 'NEEDS WORK'}",
+        "",
+        "## Summary",
+        "",
+        f"- Total checks: {report['summary']['total']}",
+        f"- Passed: {report['summary']['passes']}",
+        f"- Warnings: {report['summary']['warnings']}",
+        f"- Failures: {report['summary']['failures']}",
+        "",
+        "## Checks",
+        "",
+    ]
+    for check in report["checks"]:
+        lines.append(f"- {str(check.get('status', 'warning')).upper()}: {check.get('name')} - {check.get('message')}")
+    if report.get("screenshots"):
+        lines.extend(["", "## Screenshots", ""])
+        for shot in report["screenshots"]:
+            lines.append(f"- {shot.get('viewport')}: {shot.get('path') or shot.get('error')}")
+    write_text(project_dir / "docs" / "visual-qa-report.md", "\n".join(lines))
+
+
+def status_summary(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    state = read_state(project_dir / STATE_PATH)
+    markdown = format_discord_summary(project_dir, state)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "summary": markdown,
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def format_discord_summary(project_dir: Path, state: dict[str, Any]) -> str:
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    name = project.get("name") or project_dir.name
+    lines = [f"**Website Status: {name}**"]
+    if project.get("platform"):
+        lines.append(f"Platform: `{project['platform']}`")
+
+    preview = state.get("lastPreview", {}) if isinstance(state.get("lastPreview"), dict) else {}
+    if preview.get("publicUrl"):
+        lines.append(f"Preview: {preview['publicUrl']}")
+
+    qa = state.get("lastQa", {}) if isinstance(state.get("lastQa"), dict) else {}
+    if qa.get("summary"):
+        summary = qa["summary"]
+        lines.append(
+            f"QA: `{summary.get('passes', 0)} passed`, `{summary.get('warnings', 0)} warnings`, `{summary.get('failures', 0)} failures`"
+        )
+
+    visual = state.get("lastVisualQa", {}) if isinstance(state.get("lastVisualQa"), dict) else {}
+    if visual.get("summary"):
+        summary = visual["summary"]
+        lines.append(
+            f"Visual QA: `{summary.get('passes', 0)} passed`, `{summary.get('warnings', 0)} warnings`, `{summary.get('failures', 0)} failures`"
+        )
+
+    revision = state.get("lastRevision", {}) if isinstance(state.get("lastRevision"), dict) else {}
+    if revision.get("type"):
+        files = ", ".join(revision.get("files", [])) if isinstance(revision.get("files"), list) else ""
+        lines.append(f"Last edit: `{revision['type']}` {files}".strip())
+
+    deployment = state.get("lastDeployment", {}) if isinstance(state.get("lastDeployment"), dict) else {}
+    if deployment.get("artifact"):
+        lines.append(f"Deploy artifact: `{deployment['artifact']}`")
+
+    lines.append("")
+    lines.append("Next: run `/build-preview`, `/edit-section`, `/seo-optimize`, or `/deploy-site` as needed.")
+    return "\n".join(lines)
+
+
 def deploy_prep(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists():
@@ -1783,6 +1988,23 @@ def record_deployment(project_dir: Path, deployment: dict[str, Any]) -> None:
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_visual_qa(project_dir: Path, report: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    reports = state.setdefault("visualQaReports", [])
+    record = {
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "ok": report["ok"],
+        "platform": report["platform"],
+        "summary": report["summary"],
+        "reportPath": report["reportPath"],
+        "screenshots": report.get("screenshots", []),
+    }
+    reports.append(record)
+    state["lastVisualQa"] = record
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def read_state(state_file: Path) -> dict[str, Any]:
     if not state_file.exists():
         return {"version": 1, "previews": []}
@@ -1895,6 +2117,17 @@ def build_parser() -> argparse.ArgumentParser:
     qa.add_argument("--run-build", action="store_true", help="Run npm run build for Node/Next.js projects.")
     qa.add_argument("--build-timeout", type=int, default=120)
     qa.set_defaults(func=run_qa)
+
+    visual = subparsers.add_parser("visual-qa", help="Run visual/responsive QA checks and optional screenshots.")
+    visual.add_argument("--project-dir", default=".", help="Website project directory.")
+    visual.add_argument("--screenshots", action="store_true", help="Capture desktop/mobile screenshots when Playwright is installed.")
+    visual.add_argument("--url", default="", help="Preview URL for screenshot capture.")
+    visual.add_argument("--output-dir", default="", help="Screenshot output directory.")
+    visual.set_defaults(func=visual_qa)
+
+    summary = subparsers.add_parser("summary", help="Return a Discord-friendly website project status summary.")
+    summary.add_argument("--project-dir", default=".", help="Website project directory.")
+    summary.set_defaults(func=status_summary)
 
     share = subparsers.add_parser("preview-share", help="Create a shareable preview URL, preferring Hermes proxy.")
     share.add_argument("--project-dir", default=".", help="Website project directory.")

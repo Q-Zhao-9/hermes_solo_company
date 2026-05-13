@@ -47,3 +47,9 @@ publishing:
 ```bash
 scripts/website_agency.py qa --project-dir "<project dir>"
 ```
+
+For a Discord-ready status after preview/QA:
+
+```bash
+scripts/website_agency.py summary --project-dir "<project dir>"
+```
