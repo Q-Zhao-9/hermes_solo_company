@@ -767,6 +767,301 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def list_sections(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    platform = detect_platform(project_dir)
+    source_path = primary_page_path(project_dir, platform)
+    if not source_path:
+        return {"ok": False, "error": f"Could not find an editable page for platform: {platform}"}
+    sections = extract_sections(source_path, platform)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "platform": platform,
+        "file": str(source_path),
+        "sections": sections,
+    }
+
+
+def edit_section(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    platform = detect_platform(project_dir)
+    source_path = primary_page_path(project_dir, platform)
+    if not source_path:
+        return {"ok": False, "error": f"Could not find an editable page for platform: {platform}"}
+
+    original = source_path.read_text(encoding="utf-8")
+    updated, changes = apply_section_edits(
+        original,
+        section=args.section,
+        heading=args.heading,
+        body=args.body,
+        cta=args.cta,
+        platform=platform,
+    )
+    if updated == original:
+        return {
+            "ok": False,
+            "error": f"No editable content was changed for section '{args.section}'.",
+            "availableSections": extract_sections(source_path, platform),
+        }
+    source_path.write_text(updated, encoding="utf-8")
+    revision = {
+        "type": "edit-section",
+        "section": args.section,
+        "request": args.request or "",
+        "changes": changes,
+        "files": [str(source_path.relative_to(project_dir))],
+    }
+    record_revision(project_dir, revision)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "platform": platform,
+        "revision": revision,
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def change_style(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    platform = detect_platform(project_dir)
+    css_path = primary_css_path(project_dir, platform)
+    if not css_path:
+        return {"ok": False, "error": f"Could not find an editable stylesheet for platform: {platform}"}
+
+    original = css_path.read_text(encoding="utf-8")
+    palette = style_palette(args.preset, args.accent, args.ink, args.surface)
+    updated = replace_palette(original, palette)
+    if updated == original:
+        return {"ok": False, "error": "No stylesheet colors were changed."}
+    css_path.write_text(updated, encoding="utf-8")
+    revision = {
+        "type": "change-style",
+        "preset": args.preset,
+        "palette": palette,
+        "files": [str(css_path.relative_to(project_dir))],
+    }
+    record_revision(project_dir, revision)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "platform": platform,
+        "revision": revision,
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def primary_page_path(project_dir: Path, platform: str) -> Path | None:
+    candidates = [project_dir / "index.html"] if platform == "static" else [project_dir / "app" / "page.tsx"]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def primary_css_path(project_dir: Path, platform: str) -> Path | None:
+    candidates = [project_dir / "styles.css"] if platform == "static" else [project_dir / "app" / "globals.css"]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+class SectionParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sections: list[dict[str, str]] = []
+        self._current: dict[str, str] | None = None
+        self._capture: str | None = None
+        self._depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr = {name.lower(): value or "" for name, value in attrs}
+        lowered = tag.lower()
+        if lowered == "section":
+            section_id = attr.get("id") or infer_section_name(attr.get("class", ""))
+            self._current = {"id": section_id or f"section-{len(self.sections) + 1}", "heading": "", "body": ""}
+            self._depth = 1
+            return
+        if self._current:
+            self._depth += 1
+            if lowered in {"h1", "h2"} and not self._current["heading"]:
+                self._capture = "heading"
+            elif lowered == "p" and not self._current["body"] and "eyebrow" not in attr.get("class", ""):
+                self._capture = "body"
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._current:
+            if tag.lower() in {"h1", "h2", "p"}:
+                self._capture = None
+            if tag.lower() == "section":
+                self.sections.append(self._current)
+                self._current = None
+                self._depth = 0
+            else:
+                self._depth = max(0, self._depth - 1)
+
+    def handle_data(self, data: str) -> None:
+        if self._current and self._capture:
+            self._current[self._capture] = (self._current[self._capture] + data).strip()
+
+
+def extract_sections(source_path: Path, platform: str) -> list[dict[str, str]]:
+    text = source_path.read_text(encoding="utf-8", errors="replace")
+    if platform == "static":
+        parser = SectionParser()
+        parser.feed(text)
+        return parser.sections
+    sections = []
+    for match in re.finditer(r"<section\b(?P<attrs>[^>]*)>(?P<body>.*?)</section>", text, flags=re.DOTALL):
+        attrs = match.group("attrs")
+        body = match.group("body")
+        section_id = attr_value(attrs, "id") or infer_section_name(attr_value(attrs, "className"))
+        heading = first_tag_text(body, "h1") or first_tag_text(body, "h2")
+        para = first_body_paragraph_text(body)
+        sections.append({"id": section_id or f"section-{len(sections) + 1}", "heading": heading, "body": para})
+    return sections
+
+
+def apply_section_edits(
+    text: str,
+    section: str,
+    heading: str,
+    body: str,
+    cta: str,
+    platform: str,
+) -> tuple[str, list[str]]:
+    section_pattern = re.compile(r"(<section\b(?P<attrs>[^>]*)>)(?P<body>.*?)(</section>)", re.DOTALL)
+    changes: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        attrs = match.group("attrs")
+        content = match.group("body")
+        section_id = attr_value(attrs, "id") or infer_section_name(attr_value(attrs, "className" if platform == "nextjs" else "class"))
+        if normalize_section(section_id) != normalize_section(section):
+            return match.group(0)
+        new_content = content
+        if heading:
+            new_content, changed = replace_first_tag(new_content, ("h1", "h2"), escape_for_platform(heading, platform))
+            if changed:
+                changes.append("heading")
+        if body:
+            new_content, changed = replace_first_body_paragraph(new_content, escape_for_platform(body, platform))
+            if changed:
+                changes.append("body")
+        if cta:
+            new_content, changed = replace_first_anchor_text(new_content, escape_for_platform(cta, platform))
+            if changed:
+                changes.append("cta")
+        return f"{match.group(1)}{new_content}{match.group(4)}"
+
+    return section_pattern.sub(replace, text), changes
+
+
+def attr_value(attrs: str, name: str) -> str:
+    match = re.search(rf"\b{name}=[\"']([^\"']+)[\"']", attrs or "")
+    return match.group(1) if match else ""
+
+
+def infer_section_name(class_value: str) -> str:
+    classes = set((class_value or "").replace("{", " ").replace("}", " ").split())
+    for candidate in ("hero", "services", "process", "contact", "cta", "proof"):
+        if candidate in classes:
+            return "top" if candidate == "hero" else candidate
+    return ""
+
+
+def normalize_section(value: str) -> str:
+    return slugify(value or "", fallback="")
+
+
+def first_tag_text(body: str, tag: str) -> str:
+    match = re.search(rf"<{tag}\b[^>]*>(.*?)</{tag}>", body, flags=re.DOTALL)
+    if not match:
+        return ""
+    return re.sub(r"<[^>]+>", "", match.group(1)).strip()
+
+
+def first_body_paragraph_text(body: str) -> str:
+    for match in re.finditer(r"<p\b(?P<attrs>[^>]*)>(?P<body>.*?)</p>", body, flags=re.DOTALL):
+        class_value = attr_value(match.group("attrs"), "class") or attr_value(match.group("attrs"), "className")
+        if "eyebrow" in class_value:
+            continue
+        return re.sub(r"<[^>]+>", "", match.group("body")).strip()
+    return ""
+
+
+def replace_first_tag(content: str, tags: tuple[str, ...], replacement: str) -> tuple[str, bool]:
+    for tag in tags:
+        pattern = re.compile(rf"(<{tag}\b[^>]*>)(.*?)(</{tag}>)", re.DOTALL)
+        if pattern.search(content):
+            return pattern.sub(lambda match: f"{match.group(1)}{replacement}{match.group(3)}", content, count=1), True
+    return content, False
+
+
+def replace_first_body_paragraph(content: str, replacement: str) -> tuple[str, bool]:
+    pattern = re.compile(r"(<p\b(?P<attrs>[^>]*)>)(.*?)(</p>)", re.DOTALL)
+    for match in pattern.finditer(content):
+        class_value = attr_value(match.group("attrs"), "class") or attr_value(match.group("attrs"), "className")
+        if "eyebrow" in class_value:
+            continue
+        start, end = match.span()
+        return f"{content[:start]}{match.group(1)}{replacement}{match.group(4)}{content[end:]}", True
+    if pattern.search(content):
+        return pattern.sub(lambda match: f"{match.group(1)}{replacement}{match.group(4)}", content, count=1), True
+    return content, False
+
+
+def replace_first_anchor_text(content: str, replacement: str) -> tuple[str, bool]:
+    pattern = re.compile(r"(<a\b[^>]*>)(.*?)(</a>)", re.DOTALL)
+    if not pattern.search(content):
+        return content, False
+    return pattern.sub(lambda match: f"{match.group(1)}{replacement}{match.group(3)}", content, count=1), True
+
+
+def escape_for_platform(value: str, platform: str) -> str:
+    return escape_js(value) if platform == "nextjs" else escape_html(value)
+
+
+def style_palette(preset: str, accent: str, ink: str, surface: str) -> dict[str, str]:
+    presets = {
+        "professional": {"accent": "#0f766e", "accentDark": "#134e4a", "ink": "#18212f", "surface": "#f8fafc"},
+        "luxury": {"accent": "#9f7a2f", "accentDark": "#5f4517", "ink": "#17130d", "surface": "#fbfaf7"},
+        "modern": {"accent": "#2563eb", "accentDark": "#1e3a8a", "ink": "#111827", "surface": "#f9fafb"},
+        "warm": {"accent": "#b45309", "accentDark": "#7c2d12", "ink": "#24140f", "surface": "#fffaf3"},
+    }
+    palette = dict(presets.get(preset, presets["professional"]))
+    if accent:
+        palette["accent"] = accent
+    if ink:
+        palette["ink"] = ink
+    if surface:
+        palette["surface"] = surface
+    return palette
+
+
+def replace_palette(css: str, palette: dict[str, str]) -> str:
+    replacements = {
+        "#0f766e": palette["accent"],
+        "#16756f": palette["accent"],
+        "#134e4a": palette["accentDark"],
+        "#18212f": palette["ink"],
+        "#172033": palette["ink"],
+        "#f8fafc": palette["surface"],
+    }
+    updated = css
+    for before, after in replacements.items():
+        updated = updated.replace(before, after)
+    return updated
+
+
 def run_qa(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists():
@@ -1268,6 +1563,17 @@ def record_qa(project_dir: Path, report: dict[str, Any]) -> None:
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_revision(project_dir: Path, revision: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    revisions = state.setdefault("revisions", [])
+    record = dict(revision)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    revisions.append(record)
+    state["lastRevision"] = record
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def read_state(state_file: Path) -> dict[str, Any]:
     if not state_file.exists():
         return {"version": 1, "previews": []}
@@ -1343,6 +1649,27 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--start", action="store_true", help="Start the preview process in the background.")
     preview.add_argument("--log-file", help="Log file for --start.")
     preview.set_defaults(func=build_preview)
+
+    sections = subparsers.add_parser("list-sections", help="List editable sections in a generated website.")
+    sections.add_argument("--project-dir", default=".", help="Website project directory.")
+    sections.set_defaults(func=list_sections)
+
+    edit = subparsers.add_parser("edit-section", help="Apply a structured section edit and record a revision.")
+    edit.add_argument("--project-dir", default=".", help="Website project directory.")
+    edit.add_argument("--section", required=True, help="Section id/name such as top, services, process, contact.")
+    edit.add_argument("--heading", default="", help="Replacement H1/H2 text for the section.")
+    edit.add_argument("--body", default="", help="Replacement first paragraph text for the section.")
+    edit.add_argument("--cta", default="", help="Replacement first link/button text for the section.")
+    edit.add_argument("--request", default="", help="Original natural-language edit request for history.")
+    edit.set_defaults(func=edit_section)
+
+    style = subparsers.add_parser("change-style", help="Apply a core color style change and record a revision.")
+    style.add_argument("--project-dir", default=".", help="Website project directory.")
+    style.add_argument("--preset", choices=("professional", "luxury", "modern", "warm"), default="professional")
+    style.add_argument("--accent", default="", help="Override accent color, for example #2563eb.")
+    style.add_argument("--ink", default="", help="Override primary text color.")
+    style.add_argument("--surface", default="", help="Override page surface color.")
+    style.set_defaults(func=change_style)
 
     qa = subparsers.add_parser("qa", help="Run website QA checks and record the report.")
     qa.add_argument("--project-dir", default=".", help="Website project directory.")

@@ -273,3 +273,140 @@ def test_qa_nextjs_source_checks(tmp_path):
     assert result["ok"] is True
     assert result["platform"] == "nextjs"
     assert result["summary"]["failures"] == 0
+
+
+def test_list_sections_for_generated_static_site(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    result = run_script("list-sections", "--project-dir", generated["projectDir"])
+
+    section_ids = [section["id"] for section in result["sections"]]
+    assert result["ok"] is True
+    assert "top" in section_ids
+    assert "services" in section_ids
+    assert "contact" in section_ids
+
+
+def test_edit_section_updates_static_site_and_records_revision(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "edit-section",
+        "--project-dir",
+        str(project_dir),
+        "--section",
+        "top",
+        "--heading",
+        "Premium dental care for busy families",
+        "--body",
+        "A calm, modern clinic experience with easy scheduling.",
+        "--cta",
+        "Schedule today",
+        "--request",
+        "make hero more premium",
+    )
+
+    html = (project_dir / "index.html").read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert "Premium dental care for busy families" in html
+    assert "A calm, modern clinic experience" in html
+    assert "Schedule today" in html
+    assert '<p class="eyebrow">professional website experience</p>' in html
+    assert state["lastRevision"]["type"] == "edit-section"
+    assert state["lastRevision"]["request"] == "make hero more premium"
+
+
+def test_change_style_updates_css_and_records_revision(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script("change-style", "--project-dir", str(project_dir), "--preset", "luxury")
+
+    css = (project_dir / "styles.css").read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert "#9f7a2f" in css
+    assert state["lastRevision"]["type"] == "change-style"
+    assert state["lastRevision"]["palette"]["accent"] == "#9f7a2f"
+
+
+def test_edit_section_updates_nextjs_page(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Portal",
+        "--description",
+        "SaaS dashboard with login for operations teams.",
+        "--audience",
+        "operations managers",
+        "--goal",
+        "Request a demo",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "edit-section",
+        "--project-dir",
+        str(project_dir),
+        "--section",
+        "top",
+        "--heading",
+        "Operations clarity in one workspace",
+        "--body",
+        "A faster way to coordinate teams and customers.",
+        "--cta",
+        "Start your demo",
+    )
+
+    page = (project_dir / "app" / "page.tsx").read_text(encoding="utf-8")
+    assert result["ok"] is True
+    assert "Operations clarity in one workspace" in page
+    assert "A faster way to coordinate teams" in page
+    assert "Start your demo" in page
+    assert '<p className="eyebrow">professional website experience</p>' in page
