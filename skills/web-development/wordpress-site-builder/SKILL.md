@@ -48,17 +48,24 @@ Use `multi-site-manager` when more than one WordPress site exists.
    scripts/website_agency.py wordpress-preview --project-dir "<project dir>" --spec "dist/hermes-wordpress/<page-slug>.json"
    ```
 
-4. Create page/post specs:
+4. After explicit approval, publish or update the WordPress page through the
+   configured Hermes MCP WordPress endpoint:
+
+   ```bash
+   scripts/website_agency.py wordpress-publish --project-dir "<project dir>" --spec "dist/hermes-wordpress/<page-slug>.json" --approved
+   ```
+
+5. Create page/post specs:
    - title
    - slug
    - SEO title/meta
    - Gutenberg/block HTML or clean semantic HTML
    - CTA and internal links
-5. Call `wordpress_preview_publish` for pre-deploy preview when content is ready.
-6. Share the Sitelet preview URL.
-7. After user approval, use the WordPress MCP tools to create/update content.
-8. Prefer `draft` or `pending` status unless the user explicitly says publish.
-9. Report page ID, status, edit URL/public URL, and preview URL.
+6. Call `wordpress_preview_publish` for pre-deploy preview when content is ready.
+7. Share the Sitelet preview URL.
+8. After user approval, use `wordpress-publish` or the WordPress MCP tools to create/update content.
+9. Prefer `draft` or `pending` status unless the user explicitly says publish.
+10. Report page ID, status, edit URL/public URL, and preview URL.
 
 ## WordPress MCP Pattern
 
@@ -91,6 +98,7 @@ explicit user approval.
 Before publish:
 
 - preview page visually
+- require explicit approval before running `wordpress-publish --approved`
 - check mobile readability
 - check links and CTAs
 - check SEO title/meta/H1

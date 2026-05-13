@@ -29,6 +29,7 @@ final class Hermes_MCP_WordPress {
         'update_post' => true,
         'list_pages' => true,
         'get_page' => true,
+        'create_draft_page' => true,
         'update_page' => true,
         'upload_media_from_url' => true,
         'list_comments' => true,
@@ -325,6 +326,21 @@ final class Hermes_MCP_WordPress {
                     'properties' => ['id' => ['type' => 'integer']],
                 ],
             ],
+            'create_draft_page' => [
+                'name' => 'create_draft_page',
+                'description' => 'Create a WordPress page. Defaults to draft; publishing should be a separate human-reviewed action.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['title'],
+                    'properties' => [
+                        'title' => ['type' => 'string'],
+                        'content' => ['type' => 'string'],
+                        'excerpt' => ['type' => 'string'],
+                        'slug' => ['type' => 'string'],
+                        'status' => ['type' => 'string', 'description' => 'draft, pending, private, or publish if the API user can publish pages.'],
+                    ],
+                ],
+            ],
             'update_page' => [
                 'name' => 'update_page',
                 'description' => 'Update a WordPress page by ID. Only supplied fields are changed.',
@@ -398,6 +414,7 @@ final class Hermes_MCP_WordPress {
             'update_post' => $this->update_content('post', $arguments),
             'list_pages' => $this->list_content('page', $arguments),
             'get_page' => $this->get_content('page', $arguments),
+            'create_draft_page' => $this->create_draft_page($arguments),
             'update_page' => $this->update_content('page', $arguments),
             'upload_media_from_url' => $this->upload_media_from_url($arguments),
             'list_comments' => $this->list_comments($arguments),
@@ -499,6 +516,43 @@ final class Hermes_MCP_WordPress {
             'status' => get_post_status($post_id),
             'edit_link' => get_edit_post_link($post_id, 'raw'),
             'link' => get_permalink($post_id),
+        ];
+    }
+
+    private function create_draft_page(array $arguments): array {
+        $this->require_capability('edit_pages');
+        $title = isset($arguments['title']) ? sanitize_text_field((string) $arguments['title']) : '';
+        if ($title === '') {
+            throw new InvalidArgumentException('title is required.');
+        }
+
+        $status = isset($arguments['status']) ? sanitize_key((string) $arguments['status']) : 'draft';
+        $allowed = ['draft', 'pending', 'private', 'publish'];
+        if (!in_array($status, $allowed, true)) {
+            throw new InvalidArgumentException('Unsupported status.');
+        }
+        if ($status === 'publish' && !current_user_can('publish_pages')) {
+            throw new RuntimeException('Current API user cannot publish pages.');
+        }
+
+        $page_id = wp_insert_post([
+            'post_type' => 'page',
+            'post_status' => $status,
+            'post_title' => $title,
+            'post_content' => wp_kses_post((string) ($arguments['content'] ?? '')),
+            'post_excerpt' => sanitize_textarea_field((string) ($arguments['excerpt'] ?? '')),
+            'post_name' => isset($arguments['slug']) ? sanitize_title((string) $arguments['slug']) : '',
+        ], true);
+
+        if (is_wp_error($page_id)) {
+            throw new RuntimeException($page_id->get_error_message());
+        }
+
+        return [
+            'id' => $page_id,
+            'status' => get_post_status($page_id),
+            'edit_link' => get_edit_post_link($page_id, 'raw'),
+            'link' => get_permalink($page_id),
         ];
     }
 

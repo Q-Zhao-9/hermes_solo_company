@@ -62,6 +62,7 @@ Restart Hermes or run `/reload-mcp` in an active Hermes chat.
 - `update_post`
 - `list_pages`
 - `get_page`
+- `create_draft_page`
 - `update_page`
 - `upload_media_from_url`
 - `list_comments`
@@ -96,4 +97,15 @@ curl -sS https://example.com/wp-json/hermes-mcp/v1/mcp \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer TOKEN' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_pages","arguments":{"limit":10}}}'
+```
+
+Create an approved draft page from a Hermes WordPress package:
+
+```bash
+scripts/website_agency.py wordpress-publish \
+  --project-dir generated-sites/acme-dental \
+  --spec dist/hermes-wordpress/home.json \
+  --mcp-url https://example.com/wp-json/hermes-mcp/v1/mcp \
+  --mcp-token TOKEN \
+  --approved
 ```

@@ -733,3 +733,155 @@ def test_wordpress_preview_uses_package_and_records_history(tmp_path, monkeypatc
     assert "<!-- wp:heading -->" in calls["content"]
     assert state["lastWordPress"]["type"] == "wordpress-preview"
     assert state["lastWordPress"]["siteletUrl"] == "https://sitelet.example/sitelet/wp-1"
+
+
+def test_wordpress_publish_requires_explicit_approval(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    package = run_script(
+        "wordpress-package",
+        "--project-dir",
+        str(project_dir),
+        "--title",
+        "Family Dental Services",
+        "--slug",
+        "family-dental-services",
+    )
+
+    result = run_script(
+        "wordpress-publish",
+        "--project-dir",
+        str(project_dir),
+        "--spec",
+        package["specPath"],
+        "--mcp-url",
+        "https://wp.example/wp-json/hermes-mcp/v1/mcp",
+        "--mcp-token",
+        "token",
+        check=False,
+    )
+
+    assert result["ok"] is False
+    assert "requires explicit approval" in result["error"]
+
+
+def test_wordpress_publish_calls_mcp_and_records_history(tmp_path, monkeypatch):
+    module = load_module()
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    package = run_script(
+        "wordpress-package",
+        "--project-dir",
+        str(project_dir),
+        "--title",
+        "Family Dental Services",
+        "--slug",
+        "family-dental-services",
+    )
+    calls = {}
+
+    def fake_publish(**kwargs):
+        calls.update(kwargs)
+        return {
+            "ok": True,
+            "id": 42,
+            "status": "draft",
+            "edit_link": "https://wp.example/wp-admin/post.php?post=42&action=edit",
+            "link": "https://wp.example/family-dental-services/",
+            "tool": "create_draft_page",
+        }
+
+    monkeypatch.setattr(module, "publish_wordpress_content", fake_publish)
+    result = module.wordpress_publish(
+        argparse.Namespace(
+            project_dir=str(project_dir),
+            spec=package["specPath"],
+            title="",
+            slug="",
+            status="",
+            excerpt="",
+            content="",
+            content_file="",
+            content_type="page",
+            wordpress_id=0,
+            no_update_existing=False,
+            mcp_url="https://wp.example/wp-json/hermes-mcp/v1/mcp",
+            mcp_token="token",
+            approved=True,
+        )
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["wordpress"]["id"] == 42
+    assert calls["title"] == "Family Dental Services"
+    assert calls["slug"] == "family-dental-services"
+    assert calls["content_type"] == "page"
+    assert calls["update_existing"] is True
+    assert "<!-- wp:heading -->" in calls["content"]
+    assert state["lastWordPress"]["type"] == "wordpress-publish"
+    assert state["lastWordPress"]["wordpressId"] == 42
+
+
+def test_publish_wordpress_content_updates_existing_page(monkeypatch):
+    module = load_module()
+    calls = []
+
+    def fake_call(endpoint, api_token, name, arguments):
+        calls.append((name, arguments))
+        if name == "list_pages":
+            return {"items": [{"id": 77, "title": "Family Dental Services", "slug": "family-dental-services"}]}
+        return {
+            "id": arguments["id"],
+            "status": arguments["status"],
+            "edit_link": "https://wp.example/wp-admin/post.php?post=77&action=edit",
+            "link": "https://wp.example/family-dental-services/",
+        }
+
+    monkeypatch.setattr(module, "call_wordpress_mcp_tool", fake_call)
+    result = module.publish_wordpress_content(
+        endpoint="https://wp.example/wp-json/hermes-mcp/v1/mcp",
+        api_token="token",
+        title="Family Dental Services",
+        content="<p>Updated</p>",
+        slug="family-dental-services",
+        excerpt="",
+        status="pending",
+        content_type="page",
+        wordpress_id=0,
+        update_existing=True,
+    )
+
+    assert result["ok"] is True
+    assert result["tool"] == "update_page"
+    assert calls[0][0] == "list_pages"
+    assert calls[1][0] == "update_page"
+    assert calls[1][1]["id"] == 77

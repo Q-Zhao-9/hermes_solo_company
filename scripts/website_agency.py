@@ -18,6 +18,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -1299,6 +1301,87 @@ def wordpress_preview(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def wordpress_publish(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    if not args.approved:
+        return {
+            "ok": False,
+            "error": "Publishing to WordPress requires explicit approval. Re-run with --approved after the preview is approved.",
+        }
+
+    try:
+        package = load_wordpress_package(project_dir, args.spec)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": str(exc)}
+    title = args.title or package.get("title") or infer_project_title(project_dir)
+    slug = args.slug or package.get("slug") or slugify(title)
+    status = args.status or package.get("status") or "draft"
+    excerpt = args.excerpt or package.get("excerpt") or ""
+    content = package.get("content", "")
+    content = resolve_wordpress_content(project_dir, args.content or content, args.content_file)
+    if not content.strip():
+        return {"ok": False, "error": "WordPress publish content is empty."}
+
+    result = publish_wordpress_content(
+        endpoint=args.mcp_url,
+        api_token=args.mcp_token,
+        title=title,
+        content=content,
+        slug=slug,
+        excerpt=excerpt,
+        status=status,
+        content_type=args.content_type,
+        wordpress_id=args.wordpress_id,
+        update_existing=not args.no_update_existing,
+    )
+    record = {
+        "type": "wordpress-publish",
+        "title": title,
+        "slug": slug,
+        "status": status,
+        "contentType": args.content_type,
+        "wordpressId": result.get("id"),
+        "editUrl": result.get("edit_link"),
+        "publicUrl": result.get("link"),
+        "tool": result.get("tool"),
+        "ok": bool(result.get("ok")),
+    }
+    record_wordpress(project_dir, record)
+    return {
+        "ok": bool(result.get("ok")),
+        "projectDir": str(project_dir),
+        "title": title,
+        "slug": slug,
+        "status": status,
+        "contentType": args.content_type,
+        "wordpress": result,
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def load_wordpress_package(project_dir: Path, spec: str) -> dict[str, Any]:
+    if not spec:
+        return {}
+    spec_path = Path(spec).expanduser()
+    if not spec_path.is_absolute():
+        spec_path = project_dir / spec_path
+    if not spec_path.exists():
+        raise FileNotFoundError(f"WordPress spec does not exist: {spec_path}")
+    payload = json.loads(spec_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"WordPress spec must be a JSON object: {spec_path}")
+    content_file = payload.get("contentFile", "")
+    content = ""
+    if content_file:
+        content_path = project_dir / str(content_file)
+        if content_path.exists():
+            content = content_path.read_text(encoding="utf-8")
+    payload["content"] = content
+    return payload
+
+
 def resolve_wordpress_content(project_dir: Path, content: str, content_file: str) -> str:
     if content_file:
         path = Path(content_file).expanduser()
@@ -1370,6 +1453,139 @@ def publish_wordpress_preview(
         return {"ok": False, "error": str(exc)}
     parsed = parse_json_output(raw)
     return parsed or {"ok": False, "error": raw}
+
+
+def publish_wordpress_content(
+    endpoint: str,
+    api_token: str,
+    title: str,
+    content: str,
+    slug: str,
+    excerpt: str,
+    status: str,
+    content_type: str,
+    wordpress_id: int,
+    update_existing: bool = True,
+) -> dict[str, Any]:
+    resolved_endpoint = (endpoint or os.getenv("WORDPRESS_MCP_URL") or os.getenv("HERMES_WORDPRESS_MCP_URL") or "").strip()
+    resolved_token = (api_token or os.getenv("WORDPRESS_MCP_TOKEN") or os.getenv("HERMES_WORDPRESS_MCP_TOKEN") or "").strip()
+    if not resolved_endpoint:
+        return {"ok": False, "error": "WORDPRESS_MCP_URL is not configured."}
+    if not resolved_token:
+        return {"ok": False, "error": "WORDPRESS_MCP_TOKEN is not configured."}
+
+    post_type = "page" if content_type == "page" else "post"
+    target_id = int(wordpress_id or 0)
+    try:
+        if target_id:
+            tool = f"update_{post_type}"
+            payload = wordpress_update_payload(target_id, title, content, slug, excerpt, status)
+            result = call_wordpress_mcp_tool(resolved_endpoint, resolved_token, tool, payload)
+            result.update({"ok": True, "tool": tool, "matchedExisting": True})
+            return result
+
+        if update_existing:
+            existing = find_existing_wordpress_content(resolved_endpoint, resolved_token, post_type, title, slug)
+            if existing:
+                tool = f"update_{post_type}"
+                payload = wordpress_update_payload(int(existing["id"]), title, content, slug, excerpt, status)
+                result = call_wordpress_mcp_tool(resolved_endpoint, resolved_token, tool, payload)
+                result.update({"ok": True, "tool": tool, "matchedExisting": True})
+                return result
+
+        if post_type == "page":
+            tool = "create_draft_page"
+            payload = wordpress_create_payload(title, content, slug, excerpt, status)
+            result = call_wordpress_mcp_tool(resolved_endpoint, resolved_token, tool, payload)
+            result.update({"ok": True, "tool": tool, "matchedExisting": False})
+            return result
+
+        tool = "create_draft_post"
+        payload = wordpress_create_payload(title, content, slug, excerpt, "draft")
+        result = call_wordpress_mcp_tool(resolved_endpoint, resolved_token, tool, payload)
+        if status and status != "draft" and result.get("id"):
+            tool = "update_post"
+            payload = wordpress_update_payload(int(result["id"]), title, content, slug, excerpt, status)
+            result = call_wordpress_mcp_tool(resolved_endpoint, resolved_token, tool, payload)
+        result.update({"ok": True, "tool": tool, "matchedExisting": False})
+        return result
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def wordpress_create_payload(title: str, content: str, slug: str, excerpt: str, status: str) -> dict[str, Any]:
+    payload = {"title": title, "content": content, "slug": slug, "excerpt": excerpt}
+    if status:
+        payload["status"] = status
+    return {key: value for key, value in payload.items() if value not in {"", None}}
+
+
+def wordpress_update_payload(content_id: int, title: str, content: str, slug: str, excerpt: str, status: str) -> dict[str, Any]:
+    payload = wordpress_create_payload(title, content, slug, excerpt, status)
+    payload["id"] = content_id
+    return payload
+
+
+def find_existing_wordpress_content(endpoint: str, api_token: str, post_type: str, title: str, slug: str) -> dict[str, Any] | None:
+    tool = "list_pages" if post_type == "page" else "list_posts"
+    search = slug or title
+    result = call_wordpress_mcp_tool(endpoint, api_token, tool, {"status": "any", "search": search, "limit": 20})
+    items = result.get("items") if isinstance(result.get("items"), list) else []
+    wanted_slug = slugify(slug or title)
+    wanted_title = normalize_title(title)
+    for item in items:
+        item_slug = str(item.get("slug") or "")
+        item_title = normalize_title(str(item.get("title") or ""))
+        if item_slug == wanted_slug or item_title == wanted_title:
+            return item
+    return None
+
+
+def normalize_title(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", value or "")).strip().lower()
+
+
+def call_wordpress_mcp_tool(endpoint: str, api_token: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "jsonrpc": "2.0",
+        "id": f"hermes-{name}",
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments},
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_token}",
+            "User-Agent": "Hermes-Agent WordPress Publisher",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"WordPress MCP call failed with HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach WordPress MCP endpoint: {exc.reason}") from exc
+
+    parsed = json.loads(raw)
+    if "error" in parsed:
+        error = parsed["error"]
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        raise RuntimeError(message or "WordPress MCP returned an error.")
+    result = parsed.get("result", {})
+    content_items = result.get("content") if isinstance(result, dict) else None
+    if isinstance(content_items, list):
+        for item in content_items:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text", "")
+                tool_result = parse_json_output(text)
+                if tool_result:
+                    return tool_result
+    return result if isinstance(result, dict) else {}
 
 
 def prepare_static_zip(project_dir: Path, deploy_dir: Path) -> dict[str, Any]:
@@ -2490,6 +2706,23 @@ def build_parser() -> argparse.ArgumentParser:
     wp_preview.add_argument("--sitelet-base-url", default=os.getenv("SITELET_BASE_URL", ""))
     wp_preview.add_argument("--sitelet-api-token", default=os.getenv("SITELET_API_TOKEN", ""))
     wp_preview.set_defaults(func=wordpress_preview)
+
+    wp_publish = subparsers.add_parser("wordpress-publish", help="Publish an approved WordPress package through Hermes MCP.")
+    wp_publish.add_argument("--project-dir", default=".", help="Website project directory.")
+    wp_publish.add_argument("--spec", default="", help="WordPress package JSON path, relative to project dir if needed.")
+    wp_publish.add_argument("--title", default="", help="Override WordPress title.")
+    wp_publish.add_argument("--slug", default="", help="Override WordPress slug.")
+    wp_publish.add_argument("--status", default="", help="Override WordPress status, usually draft or pending.")
+    wp_publish.add_argument("--excerpt", default="", help="Optional WordPress excerpt.")
+    wp_publish.add_argument("--content", default="", help="Explicit WordPress/Gutenberg HTML content.")
+    wp_publish.add_argument("--content-file", default="", help="File containing WordPress/Gutenberg HTML content.")
+    wp_publish.add_argument("--content-type", choices=("page", "post"), default="page", help="WordPress content type.")
+    wp_publish.add_argument("--wordpress-id", type=int, default=0, help="Existing WordPress page/post ID to update.")
+    wp_publish.add_argument("--no-update-existing", action="store_true", help="Do not search by title/slug before creating.")
+    wp_publish.add_argument("--mcp-url", default=os.getenv("WORDPRESS_MCP_URL", os.getenv("HERMES_WORDPRESS_MCP_URL", "")))
+    wp_publish.add_argument("--mcp-token", default=os.getenv("WORDPRESS_MCP_TOKEN", os.getenv("HERMES_WORDPRESS_MCP_TOKEN", "")))
+    wp_publish.add_argument("--approved", action="store_true", help="Required acknowledgement that the preview was approved.")
+    wp_publish.set_defaults(func=wordpress_publish)
 
     sections = subparsers.add_parser("list-sections", help="List editable sections in a generated website.")
     sections.add_argument("--project-dir", default=".", help="Website project directory.")

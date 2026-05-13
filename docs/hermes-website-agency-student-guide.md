@@ -55,6 +55,7 @@ scripts/website_agency.py deploy-prep --project-dir generated-sites/acme-dental 
 scripts/website_agency.py summary --project-dir generated-sites/acme-dental
 scripts/website_agency.py wordpress-package --project-dir generated-sites/acme-dental --title "Home" --slug home
 scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
+scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json --approved
 ```
 
 ## Preview Sharing
@@ -100,9 +101,18 @@ Preview it through Sitelet before publishing:
 scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
 ```
 
+After the preview is approved, publish or update the WordPress page through the
+Hermes MCP WordPress plugin:
+
+```bash
+export WORDPRESS_MCP_URL="https://example.com/wp-json/hermes-mcp/v1/mcp"
+export WORDPRESS_MCP_TOKEN="your-plugin-token"
+scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json --approved
+```
+
 This creates Gutenberg-style content in `dist/hermes-wordpress/`, records the
-event in `docs/hermes-website-state.json`, and keeps production publishing as a
-separate approval step.
+event in `docs/hermes-website-state.json`, and requires `--approved` before
+writing to WordPress.
 
 ## Templates
 

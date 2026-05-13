@@ -30,8 +30,14 @@ website, page, editing workflow, preview, or publish setup.
    scripts/website_agency.py wordpress-preview --project-dir "<project dir>" --spec "dist/hermes-wordpress/<page-slug>.json"
    ```
 
-5. Use `sitelet-cloud-render` and `wordpress_preview_publish` for pre-deploy
+5. After the user approves the preview, publish/update through Hermes MCP:
+
+   ```bash
+   scripts/website_agency.py wordpress-publish --project-dir "<project dir>" --spec "dist/hermes-wordpress/<page-slug>.json" --approved
+   ```
+
+6. Use `sitelet-cloud-render` and `wordpress_preview_publish` for pre-deploy
    preview HTML and history when available.
-6. Use `multi-site-manager` when the user has multiple WordPress sites.
-7. Prefer draft or staging status before live publishing.
-8. Run `website-qa-deploy` checks before production changes.
+7. Use `multi-site-manager` when the user has multiple WordPress sites.
+8. Prefer draft or staging status before live publishing.
+9. Run `website-qa-deploy` checks before production changes.
