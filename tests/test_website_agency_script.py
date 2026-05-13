@@ -18,10 +18,10 @@ def load_module():
     return module
 
 
-def run_script(*args: str) -> dict:
+def run_script(*args: str, check: bool = True) -> dict:
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), *args],
-        check=True,
+        check=check,
         capture_output=True,
         text=True,
     )
@@ -53,6 +53,9 @@ def test_create_static_site_writes_artifacts(tmp_path):
     assert (project_dir / "docs" / "website-brief.md").exists()
     assert "Book an appointment" in (project_dir / "index.html").read_text(encoding="utf-8")
     assert result["preview"]["command"].endswith("-m http.server 3010 --bind 0.0.0.0")
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert state["project"]["name"] == "Acme Dental"
+    assert state["project"]["platform"] == "static"
 
 
 def test_create_nextjs_site_for_app_description(tmp_path):
@@ -201,3 +204,72 @@ def test_inline_static_css_replaces_local_stylesheet(tmp_path):
     assert "<style>" in html
     assert "body { color: red; }" in html
     assert 'href="styles.css"' not in html
+
+
+def test_qa_passes_for_generated_static_site(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    result = run_script("qa", "--project-dir", generated["projectDir"])
+    project_dir = Path(generated["projectDir"])
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["summary"]["failures"] == 0
+    assert (project_dir / "docs" / "qa-report.md").exists()
+    assert state["lastQa"]["ok"] is True
+    assert state["qaReports"][0]["summary"]["failures"] == 0
+
+
+def test_qa_reports_static_html_failures(tmp_path):
+    project_dir = tmp_path / "broken-site"
+    project_dir.mkdir()
+    (project_dir / "index.html").write_text(
+        '<html><head></head><body><h1>One</h1><h1>Two</h1><img src="hero.png"><a href="missing.html">Missing</a></body></html>',
+        encoding="utf-8",
+    )
+
+    result = run_script("qa", "--project-dir", str(project_dir), check=False)
+
+    failures = {check["name"]: check["message"] for check in result["checks"] if check["status"] == "fail"}
+    assert result["ok"] is False
+    assert "html-title" in failures
+    assert "meta-description" in failures
+    assert "single-h1" in failures
+    assert "image-alt" in failures
+    assert any("Broken local link" in check["message"] for check in result["checks"])
+
+
+def test_qa_nextjs_source_checks(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Portal",
+        "--description",
+        "SaaS dashboard with login for operations teams.",
+        "--audience",
+        "operations managers",
+        "--goal",
+        "Request a demo",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    result = run_script("qa", "--project-dir", generated["projectDir"])
+
+    assert result["ok"] is True
+    assert result["platform"] == "nextjs"
+    assert result["summary"]["failures"] == 0

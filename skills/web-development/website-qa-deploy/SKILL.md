@@ -15,6 +15,19 @@ deployment, or release readiness.
 
 ## QA Checklist
 
+For static HTML and Next.js projects, prefer the deterministic QA helper:
+
+```bash
+scripts/website_agency.py qa --project-dir "<project dir>"
+```
+
+Add `--run-build` when dependencies are installed and the user wants build
+verification:
+
+```bash
+scripts/website_agency.py qa --project-dir "<project dir>" --run-build
+```
+
 Run what applies to the project:
 
 - install dependencies if needed
@@ -33,6 +46,7 @@ Write findings to:
 
 ```text
 docs/qa-report.md
+docs/hermes-website-state.json
 ```
 
 ## Preview

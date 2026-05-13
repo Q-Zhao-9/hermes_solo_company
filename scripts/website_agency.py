@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 import json
 import os
 import re
@@ -100,6 +101,7 @@ def create_site(args: argparse.Namespace) -> dict[str, Any]:
     else:
         write_static_project(root, spec)
 
+    record_project_created(root, spec)
     preview = preview_plan(root, port=args.port)
     return {
         "ok": True,
@@ -765,6 +767,266 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def run_qa(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+
+    platform = detect_platform(project_dir)
+    checks: list[dict[str, Any]] = []
+    checks.extend(check_required_docs(project_dir))
+    if platform == "static":
+        checks.extend(check_static_html(project_dir))
+    elif platform == "nextjs":
+        checks.extend(check_nextjs_source(project_dir))
+    else:
+        checks.append(
+            {
+                "name": "project-type",
+                "status": "warning",
+                "message": f"Unknown project type: {platform}. QA is limited to shared docs checks.",
+            }
+        )
+
+    if args.run_build:
+        checks.append(run_build_check(project_dir, platform, timeout=args.build_timeout))
+
+    summary = summarize_checks(checks)
+    report = {
+        "ok": summary["failures"] == 0,
+        "projectDir": str(project_dir),
+        "platform": platform,
+        "summary": summary,
+        "checks": checks,
+        "reportPath": str(project_dir / "docs" / "qa-report.md"),
+        "statePath": str(project_dir / STATE_PATH),
+    }
+    write_qa_report(project_dir, report)
+    record_qa(project_dir, report)
+    return report
+
+
+def check_required_docs(project_dir: Path) -> list[dict[str, Any]]:
+    required = [
+        "docs/website-brief.md",
+        "docs/sitemap.md",
+        "docs/design-system.md",
+        "docs/content-plan.md",
+    ]
+    checks = []
+    for rel in required:
+        path = project_dir / rel
+        checks.append(
+            {
+                "name": f"required-doc:{rel}",
+                "status": "pass" if path.exists() and path.read_text(encoding="utf-8", errors="replace").strip() else "warning",
+                "message": "Present." if path.exists() else "Missing generated website planning artifact.",
+            }
+        )
+    return checks
+
+
+class HtmlAuditParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title = ""
+        self.meta_description = ""
+        self.h1_count = 0
+        self.images_missing_alt: list[str] = []
+        self.links: list[str] = []
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr = {name.lower(): value or "" for name, value in attrs}
+        lowered = tag.lower()
+        if lowered == "title":
+            self._in_title = True
+        elif lowered == "meta" and attr.get("name", "").lower() == "description":
+            self.meta_description = attr.get("content", "").strip()
+        elif lowered == "h1":
+            self.h1_count += 1
+        elif lowered == "img":
+            if "alt" not in attr:
+                self.images_missing_alt.append(attr.get("src", "[inline image]"))
+        elif lowered == "a" and attr.get("href"):
+            self.links.append(attr["href"])
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+
+
+def check_static_html(project_dir: Path) -> list[dict[str, Any]]:
+    index_path = project_dir / "index.html"
+    if not index_path.exists():
+        return [{"name": "static-index", "status": "fail", "message": "index.html is missing."}]
+
+    parser = HtmlAuditParser()
+    parser.feed(index_path.read_text(encoding="utf-8", errors="replace"))
+    checks = [
+        check_bool("html-title", bool(parser.title.strip()), "Page has a <title>.", "Missing <title>."),
+        check_bool(
+            "meta-description",
+            bool(parser.meta_description),
+            "Page has a meta description.",
+            "Missing meta description.",
+        ),
+        check_bool("single-h1", parser.h1_count == 1, "Page has exactly one H1.", f"Expected one H1, found {parser.h1_count}."),
+        check_bool(
+            "image-alt",
+            not parser.images_missing_alt,
+            "All images have alt attributes.",
+            f"Images missing alt text: {', '.join(parser.images_missing_alt[:5])}",
+        ),
+    ]
+    checks.extend(check_links(project_dir, parser.links))
+    return checks
+
+
+def check_nextjs_source(project_dir: Path) -> list[dict[str, Any]]:
+    layout = read_optional(project_dir / "app" / "layout.tsx")
+    page = read_optional(project_dir / "app" / "page.tsx")
+    package_json = project_dir / "package.json"
+    checks = [
+        check_bool("package-json", package_json.exists(), "package.json exists.", "package.json is missing."),
+        check_bool("next-layout", bool(layout), "app/layout.tsx exists.", "app/layout.tsx is missing."),
+        check_bool("next-page", bool(page), "app/page.tsx exists.", "app/page.tsx is missing."),
+        check_bool("metadata-title", "title" in layout, "Metadata title is present.", "Metadata title is missing."),
+        check_bool(
+            "metadata-description",
+            "description" in layout,
+            "Metadata description is present.",
+            "Metadata description is missing.",
+        ),
+        check_bool("page-h1", "<h1" in page, "Page source contains an H1.", "Page source does not contain an H1."),
+    ]
+    image_tags = re.findall(r"<img\b[^>]*>", page)
+    missing_alt = [tag for tag in image_tags if not re.search(r"\balt=", tag)]
+    checks.append(
+        check_bool(
+            "image-alt",
+            not missing_alt,
+            "All explicit img tags include alt.",
+            f"{len(missing_alt)} explicit img tag(s) are missing alt.",
+        )
+    )
+    return checks
+
+
+def check_links(project_dir: Path, links: list[str]) -> list[dict[str, Any]]:
+    checks = []
+    for href in links:
+        if href.startswith(("#", "mailto:", "tel:", "http://", "https://", "//")):
+            continue
+        target = href.split("#", 1)[0].split("?", 1)[0]
+        if not target:
+            continue
+        path = (project_dir / target).resolve()
+        try:
+            path.relative_to(project_dir.resolve())
+        except ValueError:
+            checks.append({"name": "internal-link", "status": "fail", "message": f"Link escapes project directory: {href}"})
+            continue
+        checks.append(
+            {
+                "name": "internal-link",
+                "status": "pass" if path.exists() else "fail",
+                "message": f"{href} exists." if path.exists() else f"Broken local link: {href}",
+            }
+        )
+    if not checks:
+        checks.append({"name": "internal-links", "status": "pass", "message": "No broken local file links found."})
+    return checks
+
+
+def run_build_check(project_dir: Path, platform: str, timeout: int) -> dict[str, Any]:
+    if platform not in {"nextjs", "node"}:
+        return {"name": "build", "status": "skip", "message": f"No build command required for {platform} project."}
+    package_path = project_dir / "package.json"
+    if not package_path.exists():
+        return {"name": "build", "status": "fail", "message": "package.json is missing."}
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {"name": "build", "status": "fail", "message": f"package.json is invalid JSON: {exc}"}
+    scripts = package.get("scripts") if isinstance(package, dict) else None
+    if not isinstance(scripts, dict) or "build" not in scripts:
+        return {"name": "build", "status": "warning", "message": "No npm build script is defined."}
+    try:
+        completed = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=max(5, int(timeout)),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"name": "build", "status": "fail", "message": f"Build could not complete: {exc}"}
+    output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+    if len(output) > 2000:
+        output = output[-2000:]
+    return {
+        "name": "build",
+        "status": "pass" if completed.returncode == 0 else "fail",
+        "message": "npm run build passed." if completed.returncode == 0 else "npm run build failed.",
+        "exitCode": completed.returncode,
+        "outputTail": output,
+    }
+
+
+def check_bool(name: str, condition: bool, pass_message: str, fail_message: str) -> dict[str, Any]:
+    return {"name": name, "status": "pass" if condition else "fail", "message": pass_message if condition else fail_message}
+
+
+def summarize_checks(checks: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"pass": 0, "warning": 0, "fail": 0, "skip": 0}
+    for check in checks:
+        status = str(check.get("status") or "warning")
+        counts[status] = counts.get(status, 0) + 1
+    return {
+        "total": len(checks),
+        "passes": counts.get("pass", 0),
+        "warnings": counts.get("warning", 0),
+        "failures": counts.get("fail", 0),
+        "skipped": counts.get("skip", 0),
+    }
+
+
+def write_qa_report(project_dir: Path, report: dict[str, Any]) -> None:
+    lines = [
+        "# QA Report",
+        "",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        f"Platform: {report['platform']}",
+        f"Status: {'PASS' if report['ok'] else 'NEEDS WORK'}",
+        "",
+        "## Summary",
+        "",
+        f"- Total checks: {report['summary']['total']}",
+        f"- Passed: {report['summary']['passes']}",
+        f"- Warnings: {report['summary']['warnings']}",
+        f"- Failures: {report['summary']['failures']}",
+        f"- Skipped: {report['summary']['skipped']}",
+        "",
+        "## Checks",
+        "",
+    ]
+    for check in report["checks"]:
+        status = str(check.get("status", "warning")).upper()
+        lines.append(f"- {status}: {check.get('name')} - {check.get('message')}")
+    write_text(project_dir / "docs" / "qa-report.md", "\n".join(lines))
+
+
+def read_optional(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def preview_share(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists():
@@ -973,6 +1235,39 @@ def record_preview(project_dir: Path, preview: dict[str, Any], attempts: list[di
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_project_created(project_dir: Path, spec: SiteSpec) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    state["project"] = {
+        "name": spec.name,
+        "description": spec.description,
+        "audience": spec.audience,
+        "goal": spec.goal,
+        "tone": spec.tone,
+        "platform": spec.platform,
+        "slug": spec.slug,
+        "createdAt": state.get("project", {}).get("createdAt") or datetime.now(timezone.utc).isoformat(),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    write_text(state_file, json.dumps(state, indent=2))
+
+
+def record_qa(project_dir: Path, report: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    qa_reports = state.setdefault("qaReports", [])
+    record = {
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "ok": report["ok"],
+        "platform": report["platform"],
+        "summary": report["summary"],
+        "reportPath": report["reportPath"],
+    }
+    qa_reports.append(record)
+    state["lastQa"] = record
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def read_state(state_file: Path) -> dict[str, Any]:
     if not state_file.exists():
         return {"version": 1, "previews": []}
@@ -1048,6 +1343,12 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--start", action="store_true", help="Start the preview process in the background.")
     preview.add_argument("--log-file", help="Log file for --start.")
     preview.set_defaults(func=build_preview)
+
+    qa = subparsers.add_parser("qa", help="Run website QA checks and record the report.")
+    qa.add_argument("--project-dir", default=".", help="Website project directory.")
+    qa.add_argument("--run-build", action="store_true", help="Run npm run build for Node/Next.js projects.")
+    qa.add_argument("--build-timeout", type=int, default=120)
+    qa.set_defaults(func=run_qa)
 
     share = subparsers.add_parser("preview-share", help="Create a shareable preview URL, preferring Hermes proxy.")
     share.add_argument("--project-dir", default=".", help="Website project directory.")

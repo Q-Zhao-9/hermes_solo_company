@@ -40,3 +40,10 @@ website in a browser.
 7. If the build fails, switch to `fix-build`.
 
 Return the preview URL and the command/process status.
+
+After creating a preview, run QA when the user asks for readiness or before
+publishing:
+
+```bash
+scripts/website_agency.py qa --project-dir "<project dir>"
+```

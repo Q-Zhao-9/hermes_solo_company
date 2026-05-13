@@ -21,4 +21,10 @@ a website or page.
 3. Update title, meta description, headings, body copy, FAQ, schema, alt text,
    and internal links as appropriate for the platform.
 4. Preserve natural language quality; do not keyword-stuff.
-5. Run build or content checks when available and summarize the SEO changes.
+5. Run the website QA helper when working on static HTML or Next.js:
+
+   ```bash
+   scripts/website_agency.py qa --project-dir "<project dir>"
+   ```
+
+6. Summarize the SEO changes and any remaining QA warnings.

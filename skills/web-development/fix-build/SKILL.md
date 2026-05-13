@@ -15,11 +15,18 @@ website build or preview failure.
 
 ## Workflow
 
-1. Reproduce the failure with the existing project command when feasible.
-2. Read the first real error and the related source file before editing.
-3. Apply the smallest correct fix that matches the project conventions.
-4. Re-run the failing command or a narrower equivalent.
-5. Summarize the cause, changed files, and verification result.
+1. Start with the deterministic QA helper when the project is static HTML or
+   Next.js:
+
+   ```bash
+   scripts/website_agency.py qa --project-dir "<project dir>" --run-build
+   ```
+
+2. Reproduce the failure with the existing project command when feasible.
+3. Read the first real error and the related source file before editing.
+4. Apply the smallest correct fix that matches the project conventions.
+5. Re-run the failing command or a narrower equivalent.
+6. Summarize the cause, changed files, and verification result.
 
 Do not hide unresolved warnings that affect preview, publish, SEO, forms, auth,
 payments, or data integrity.
