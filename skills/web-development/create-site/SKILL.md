@@ -28,7 +28,12 @@ new website from a business idea.
    coding unless the user explicitly asks for a quick prototype.
 5. Route implementation to `nextjs-site-builder`, `static-html-site-builder`,
    `wordpress-site-builder`, or `shopify-site-builder`.
-6. Build, preview, QA, and summarize changed files or project path.
+6. Build, preview, QA, and summarize changed files or project path. For
+   shareable preview links, run:
+
+   ```bash
+   scripts/website_agency.py preview-share --project-dir "<project dir>" --prefer hermesproxy
+   ```
 
 Default to a professional Next.js site for custom business/product websites,
 static HTML for a quick class/demo landing page, WordPress for editable content

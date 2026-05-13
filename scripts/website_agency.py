@@ -9,7 +9,9 @@ does not install dependencies.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -20,6 +22,7 @@ from typing import Any
 
 
 DEFAULT_PORT = 3010
+STATE_PATH = Path("docs") / "hermes-website-state.json"
 
 
 @dataclass(frozen=True)
@@ -762,6 +765,235 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def preview_share(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+
+    plan = preview_plan(project_dir, port=args.port)
+    attempts: list[dict[str, Any]] = []
+    local_process: dict[str, Any] | None = None
+    if args.start_local:
+        local_process = start_preview_process(project_dir, plan["command"], args.log_file)
+
+    if args.prefer in {"hermesproxy", "auto"}:
+        proxy_result = start_hermes_proxy(
+            target=plan["localUrl"],
+            site=args.site or project_dir.name,
+            base_url=args.proxy_base_url,
+            token=args.proxy_token,
+            wait_seconds=args.wait_seconds,
+        )
+        proxy_result.setdefault("method", "hermesproxy")
+        attempts.append(proxy_result)
+        if proxy_result.get("ok"):
+            preview = {
+                "method": "hermesproxy",
+                "projectDir": str(project_dir),
+                "platform": plan["platform"],
+                "localUrl": plan["localUrl"],
+                "publicUrl": proxy_result.get("publicUrl"),
+                "site": proxy_result.get("site") or args.site or project_dir.name,
+                "tunnelId": proxy_result.get("tunnelId"),
+            }
+            record_preview(project_dir, preview, attempts)
+            return {"ok": True, "preview": preview, "process": local_process, "attempts": attempts}
+
+    wants_sitelet = args.prefer == "sitelet" or args.fallback in {"sitelet", "auto"}
+    if wants_sitelet and plan["platform"] == "static":
+        sitelet_result = publish_sitelet_static(
+            project_dir=project_dir,
+            title=args.title or project_dir.name,
+            base_url=args.sitelet_base_url,
+            api_token=args.sitelet_api_token,
+        )
+        sitelet_result.setdefault("method", "sitelet")
+        attempts.append(sitelet_result)
+        if sitelet_result.get("ok"):
+            preview = {
+                "method": "sitelet",
+                "projectDir": str(project_dir),
+                "platform": plan["platform"],
+                "localUrl": plan["localUrl"],
+                "publicUrl": sitelet_result.get("siteletUrl") or sitelet_result.get("generatedUrl"),
+                "siteletUrl": sitelet_result.get("siteletUrl"),
+                "generatedUrl": sitelet_result.get("generatedUrl"),
+            }
+            record_preview(project_dir, preview, attempts)
+            return {"ok": True, "preview": preview, "process": local_process, "attempts": attempts}
+
+    message = "No shareable preview URL was created."
+    if plan["platform"] != "static":
+        message += " Sitelet fallback only supports static HTML projects."
+    return {
+        "ok": False,
+        "error": message,
+        "preview": plan,
+        "process": local_process,
+        "attempts": attempts,
+    }
+
+
+def start_hermes_proxy(
+    target: str,
+    site: str,
+    base_url: str = "",
+    token: str = "",
+    wait_seconds: float = 8,
+) -> dict[str, Any]:
+    script = Path(__file__).resolve().parent / "start_hermes_proxy_connector.py"
+    if not script.exists():
+        return {"ok": False, "method": "hermesproxy", "error": f"connector helper not found: {script}"}
+
+    command = [
+        sys.executable,
+        str(script),
+        "--target",
+        target,
+        "--site",
+        site,
+        "--wait-seconds",
+        str(wait_seconds),
+    ]
+    if base_url:
+        command.extend(["--base-url", base_url])
+    if token:
+        command.extend(["--token", token])
+
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=max(10, int(wait_seconds) + 8))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "method": "hermesproxy", "error": str(exc)}
+
+    payload = parse_json_output(completed.stdout)
+    if not payload:
+        payload = {"ok": False, "error": completed.stderr.strip() or completed.stdout.strip()}
+    payload.setdefault("method", "hermesproxy")
+    if completed.returncode != 0:
+        payload["ok"] = False
+        payload.setdefault("error", completed.stderr.strip() or "Hermes proxy connector failed.")
+    return payload
+
+
+def publish_sitelet_static(
+    project_dir: Path,
+    title: str,
+    base_url: str = "",
+    api_token: str = "",
+) -> dict[str, Any]:
+    index_path = project_dir / "index.html"
+    if not index_path.exists():
+        return {"ok": False, "method": "sitelet", "error": f"static index.html not found: {index_path}"}
+
+    html = inline_static_css(index_path)
+    try:
+        from tools.sitelet_tool import sitelet_publish
+
+        raw = sitelet_publish(
+            title=title,
+            html=html,
+            source="website-agency-preview",
+            base_url=base_url or os.getenv("SITELET_BASE_URL", ""),
+            api_token=api_token or os.getenv("SITELET_API_TOKEN", ""),
+        )
+    except Exception as exc:
+        return {"ok": False, "method": "sitelet", "error": str(exc)}
+
+    payload = parse_json_output(raw)
+    if not payload:
+        return {"ok": False, "method": "sitelet", "error": raw}
+    payload.setdefault("method", "sitelet")
+    return payload
+
+
+def inline_static_css(index_path: Path) -> str:
+    html = index_path.read_text(encoding="utf-8")
+    project_dir = index_path.parent
+
+    def replace_link(match: re.Match[str]) -> str:
+        attrs = match.group(0)
+        href_match = re.search(r'href=["\']([^"\']+)["\']', attrs, flags=re.IGNORECASE)
+        if not href_match:
+            return attrs
+        href = href_match.group(1)
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", href) or href.startswith("//"):
+            return attrs
+        css_path = (project_dir / href).resolve()
+        try:
+            css_path.relative_to(project_dir.resolve())
+        except ValueError:
+            return attrs
+        if not css_path.exists() or not css_path.is_file():
+            return attrs
+        css = css_path.read_text(encoding="utf-8")
+        return f"<style>\n{css}\n</style>"
+
+    return re.sub(
+        r"<link\b(?=[^>]*rel=[\"']stylesheet[\"'])(?=[^>]*href=[\"'][^\"']+[\"'])[^>]*>",
+        replace_link,
+        html,
+        flags=re.IGNORECASE,
+    )
+
+
+def parse_json_output(value: str) -> dict[str, Any]:
+    text = (value or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            parsed = json.loads(text[start : end + 1])
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def record_preview(project_dir: Path, preview: dict[str, Any], attempts: list[dict[str, Any]]) -> None:
+    state_file = project_dir / STATE_PATH
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state = read_state(state_file)
+    previews = state.setdefault("previews", [])
+    previews.append(
+        {
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "preview": preview,
+            "attempts": sanitize_attempts(attempts),
+        }
+    )
+    state["lastPreview"] = preview
+    write_text(state_file, json.dumps(state, indent=2))
+
+
+def read_state(state_file: Path) -> dict[str, Any]:
+    if not state_file.exists():
+        return {"version": 1, "previews": []}
+    try:
+        parsed = json.loads(state_file.read_text(encoding="utf-8"))
+        return parsed if isinstance(parsed, dict) else {"version": 1, "previews": []}
+    except json.JSONDecodeError:
+        return {"version": 1, "previews": []}
+
+
+def sanitize_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized = []
+    for attempt in attempts:
+        item = dict(attempt)
+        for key in ("token", "api_token", "apiToken"):
+            if key in item:
+                item[key] = "[redacted]"
+        sanitized.append(item)
+    return sanitized
+
+
 def start_preview_process(project_dir: Path, command: str, log_file: str | None) -> dict[str, Any]:
     log_path = Path(log_file).expanduser().resolve() if log_file else Path("/tmp") / f"hermes-website-preview-{project_dir.name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -816,6 +1048,22 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--start", action="store_true", help="Start the preview process in the background.")
     preview.add_argument("--log-file", help="Log file for --start.")
     preview.set_defaults(func=build_preview)
+
+    share = subparsers.add_parser("preview-share", help="Create a shareable preview URL, preferring Hermes proxy.")
+    share.add_argument("--project-dir", default=".", help="Website project directory.")
+    share.add_argument("--port", type=int, default=DEFAULT_PORT)
+    share.add_argument("--prefer", choices=("auto", "hermesproxy", "sitelet"), default="hermesproxy")
+    share.add_argument("--fallback", choices=("auto", "sitelet", "none"), default="auto")
+    share.add_argument("--site", help="Hermes proxy site name.")
+    share.add_argument("--title", help="Sitelet preview title.")
+    share.add_argument("--proxy-base-url", default=os.getenv("HERMES_PROXY_BASE_URL", ""))
+    share.add_argument("--proxy-token", default=os.getenv("HERMES_PROXY_TOKEN", ""))
+    share.add_argument("--sitelet-base-url", default=os.getenv("SITELET_BASE_URL", ""))
+    share.add_argument("--sitelet-api-token", default=os.getenv("SITELET_API_TOKEN", ""))
+    share.add_argument("--wait-seconds", type=float, default=8)
+    share.add_argument("--no-start-local", dest="start_local", action="store_false")
+    share.add_argument("--log-file", help="Local preview server log file.")
+    share.set_defaults(func=preview_share, start_local=True)
 
     return parser
 
