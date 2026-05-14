@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Deterministic helpers for Hermes marketing and SEO agency workflows.
 
-Phase 1 focuses on strategy and campaign memory. It avoids network access and
-does not publish, message, email, or modify external systems.
+Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
+and draft generation. It avoids network access and does not publish, message,
+email, or modify external systems.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any
 
 
 STATE_PATH = Path("docs") / "hermes-marketing-state.json"
+CONTENT_DIR = Path("docs") / "content"
 
 
 @dataclass(frozen=True)
@@ -56,16 +58,18 @@ def write_text(path: Path, content: str) -> None:
 
 def read_state(state_file: Path) -> dict[str, Any]:
     if not state_file.exists():
-        return {"version": 1, "strategies": [], "campaigns": []}
+        return {"version": 1, "strategies": [], "campaigns": [], "contentPlans": [], "contentDrafts": []}
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"version": 1, "strategies": [], "campaigns": []}
+        return {"version": 1, "strategies": [], "campaigns": [], "contentPlans": [], "contentDrafts": []}
     if not isinstance(data, dict):
-        return {"version": 1, "strategies": [], "campaigns": []}
+        return {"version": 1, "strategies": [], "campaigns": [], "contentPlans": [], "contentDrafts": []}
     data.setdefault("version", 1)
     data.setdefault("strategies", [])
     data.setdefault("campaigns", [])
+    data.setdefault("contentPlans", [])
+    data.setdefault("contentDrafts", [])
     return data
 
 
@@ -170,6 +174,160 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def generate_content_plan(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    campaign = select_campaign(state, args.campaign)
+    if not campaign:
+        return {"ok": False, "error": "No campaign found. Run create-campaign first."}
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    weeks = max(1, args.weeks)
+    cadence = max(1, args.cadence)
+    channels = parse_list(args.channels) or [str(channel) for channel in campaign.get("channels", [])] or ["LinkedIn", "X", "Blog"]
+    plan = build_content_plan(campaign, strategy, weeks=weeks, cadence=cadence, channels=channels)
+    plan_path = project_dir / CONTENT_DIR / f"{campaign['slug']}-content-calendar.md"
+    plan_json_path = project_dir / CONTENT_DIR / f"{campaign['slug']}-content-calendar.json"
+    write_text(plan_path, render_content_plan_markdown(plan))
+    write_text(plan_json_path, json.dumps(plan, indent=2))
+    record_content_plan(project_dir, plan)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "plan": plan,
+        "planPath": str(plan_path),
+        "planJsonPath": str(plan_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Generate draft assets with generate-posts, then review before publishing.",
+    }
+
+
+def generate_posts(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    campaign = select_campaign(state, args.campaign)
+    if not campaign:
+        return {"ok": False, "error": "No campaign found. Run create-campaign first."}
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    channels = parse_list(args.channels) or [str(channel) for channel in campaign.get("channels", [])] or ["LinkedIn"]
+    count = max(1, args.count)
+    drafts = build_content_drafts(campaign, strategy, channels=channels, count=count, theme=args.theme, stage=args.stage)
+    draft_dir = project_dir / CONTENT_DIR / "drafts"
+    draft_path = draft_dir / f"{campaign['slug']}-drafts.md"
+    draft_json_path = draft_dir / f"{campaign['slug']}-drafts.json"
+    write_text(draft_path, render_drafts_markdown(drafts))
+    write_text(draft_json_path, json.dumps(drafts, indent=2))
+    record_content_drafts(project_dir, drafts)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "drafts": drafts,
+        "draftPath": str(draft_path),
+        "draftJsonPath": str(draft_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Content drafts created for review. Publishing requires explicit approval.",
+    }
+
+
+def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
+    if campaign_slug:
+        for campaign in state.get("campaigns", []):
+            if isinstance(campaign, dict) and campaign.get("slug") == campaign_slug:
+                return campaign
+        return {}
+    campaign = state.get("lastCampaign", {})
+    return campaign if isinstance(campaign, dict) else {}
+
+
+def build_content_plan(
+    campaign: dict[str, Any],
+    strategy: dict[str, Any],
+    *,
+    weeks: int,
+    cadence: int,
+    channels: list[str],
+) -> dict[str, Any]:
+    themes = campaign.get("themes", []) if isinstance(campaign.get("themes"), list) else []
+    if not themes:
+        themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
+    if not themes:
+        themes = ["Problem education", "Customer proof", "ROI and outcomes"]
+    items = []
+    for week in range(1, weeks + 1):
+        for slot in range(1, cadence + 1):
+            channel = channels[(week + slot - 2) % len(channels)]
+            theme = str(themes[(week + slot - 2) % len(themes)])
+            stage = content_stage(week, weeks)
+            items.append(
+                {
+                    "week": week,
+                    "slot": slot,
+                    "channel": channel,
+                    "stage": stage,
+                    "theme": theme,
+                    "angle": content_angle(channel, stage, theme, campaign),
+                    "format": platform_format(channel),
+                    "cta": campaign.get("cta", ""),
+                    "approvalStatus": "draft",
+                }
+            )
+    return {
+        "type": "content-plan",
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "weeks": weeks,
+        "cadencePerWeek": cadence,
+        "channels": channels,
+        "items": items,
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_content_drafts(
+    campaign: dict[str, Any],
+    strategy: dict[str, Any],
+    *,
+    channels: list[str],
+    count: int,
+    theme: str,
+    stage: str,
+) -> dict[str, Any]:
+    themes = [theme] if theme else campaign.get("themes", [])
+    if not isinstance(themes, list) or not themes:
+        themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else ["Problem education"]
+    brand = str(strategy.get("brand") or "The company")
+    brand_voice = strategy.get("brandVoice", {}) if isinstance(strategy.get("brandVoice"), dict) else {}
+    tone = str(strategy.get("tone") or brand_voice.get("tone") or "professional")
+    drafts = []
+    for channel in channels:
+        for index in range(1, count + 1):
+            active_theme = str(themes[(index - 1) % len(themes)])
+            draft = draft_for_channel(
+                channel=channel,
+                brand=brand,
+                campaign=campaign,
+                theme=active_theme,
+                stage=stage or content_stage(index, count),
+                tone=tone,
+                index=index,
+            )
+            drafts.append(draft)
+    return {
+        "type": "content-drafts",
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "channels": channels,
+        "countPerChannel": count,
+        "drafts": drafts,
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -224,6 +382,12 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
         lines.append("Channels: " + ", ".join(f"`{channel}`" for channel in channels[:5]))
     if campaign.get("name"):
         lines.append(f"Latest campaign: `{campaign['name']}` ({campaign.get('duration', 'duration TBD')})")
+    plan = state.get("lastContentPlan", {}) if isinstance(state.get("lastContentPlan"), dict) else {}
+    if plan.get("items"):
+        lines.append(f"Content plan: `{len(plan['items'])} draft slots` across `{len(plan.get('channels', []))} channels`")
+    drafts = state.get("lastContentDrafts", {}) if isinstance(state.get("lastContentDrafts"), dict) else {}
+    if drafts.get("drafts"):
+        lines.append(f"Content drafts: `{len(drafts['drafts'])}` ready for review")
     lines.append("")
     lines.append("Next: create a campaign, generate content plan, or prepare SEO/GEO tasks.")
     return "\n".join(lines)
@@ -243,6 +407,22 @@ def record_campaign(project_dir: Path, campaign: dict[str, Any]) -> None:
     state.setdefault("campaigns", []).append(campaign)
     state["lastCampaign"] = campaign
     state["workflowState"] = "campaign_ready"
+    write_state(project_dir, state)
+
+
+def record_content_plan(project_dir: Path, plan: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("contentPlans", []).append(plan)
+    state["lastContentPlan"] = plan
+    state["workflowState"] = "content_plan_ready"
+    write_state(project_dir, state)
+
+
+def record_content_drafts(project_dir: Path, drafts: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("contentDrafts", []).append(drafts)
+    state["lastContentDrafts"] = drafts
+    state["workflowState"] = "content_drafts_ready"
     write_state(project_dir, state)
 
 
@@ -345,6 +525,170 @@ def campaign_angle(channel: str, objective: str, offer: str) -> str:
     return f"Short platform-native story about {offer} and {objective}."
 
 
+def content_stage(week: int, total_weeks: int) -> str:
+    if total_weeks <= 1 or week == 1:
+        return "awareness"
+    if week >= total_weeks:
+        return "conversion"
+    return "consideration"
+
+
+def platform_format(channel: str) -> str:
+    lowered = channel.lower()
+    if "linkedin" in lowered:
+        return "thought leadership post"
+    if lowered in {"x", "twitter"} or "x/" in lowered:
+        return "short thread"
+    if "youtube" in lowered:
+        return "video script outline"
+    if "tiktok" in lowered or "instagram" in lowered:
+        return "short-form video script"
+    if "blog" in lowered or "seo" in lowered:
+        return "SEO article brief"
+    if "email" in lowered:
+        return "email sequence message"
+    if "discord" in lowered:
+        return "community announcement"
+    if "reddit" in lowered:
+        return "discussion starter"
+    return "platform-native post"
+
+
+def content_angle(channel: str, stage: str, theme: str, campaign: dict[str, Any]) -> str:
+    offer = str(campaign.get("offer") or "the offer")
+    objective = str(campaign.get("objective") or "the campaign goal")
+    lowered = channel.lower()
+    if "linkedin" in lowered:
+        return f"{theme}: executive lesson about {offer} and {objective}."
+    if lowered in {"x", "twitter"} or "x/" in lowered:
+        return f"{theme}: concise thread with one proof point and one CTA."
+    if "youtube" in lowered:
+        return f"{theme}: demo narrative showing the problem, workflow, and result."
+    if "blog" in lowered or "seo" in lowered:
+        return f"{theme}: search-intent brief for buyers in {stage} stage."
+    if "email" in lowered:
+        return f"{theme}: nurture message that moves the reader toward {campaign.get('cta', 'the CTA')}."
+    return f"{theme}: {stage} content adapted for {channel}."
+
+
+def draft_for_channel(
+    *,
+    channel: str,
+    brand: str,
+    campaign: dict[str, Any],
+    theme: str,
+    stage: str,
+    tone: str,
+    index: int,
+) -> dict[str, Any]:
+    lowered = channel.lower()
+    if "linkedin" in lowered:
+        content = linkedin_draft(brand, campaign, theme, stage)
+    elif lowered in {"x", "twitter"} or "x/" in lowered:
+        content = x_thread_draft(brand, campaign, theme, stage)
+    elif "youtube" in lowered:
+        content = youtube_script_draft(brand, campaign, theme, stage)
+    elif "blog" in lowered or "seo" in lowered:
+        content = blog_brief_draft(brand, campaign, theme, stage)
+    elif "email" in lowered:
+        content = email_draft(brand, campaign, theme, stage)
+    elif "discord" in lowered:
+        content = discord_draft(brand, campaign, theme, stage)
+    else:
+        content = generic_social_draft(brand, campaign, theme, stage, channel)
+    return {
+        "id": slugify(f"{campaign.get('slug', 'campaign')}-{channel}-{index}", fallback=f"draft-{index}"),
+        "channel": channel,
+        "format": platform_format(channel),
+        "theme": theme,
+        "stage": stage,
+        "tone": tone,
+        "content": content,
+        "approvalStatus": "draft",
+    }
+
+
+def linkedin_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str) -> str:
+    offer = campaign.get("offer", "the solution")
+    objective = campaign.get("objective", "improve outcomes")
+    cta = campaign.get("cta", "Book a consultation")
+    return (
+        f"{theme} is not just a marketing message. It is often the difference between a team that can measure progress and a team that is guessing.\n\n"
+        f"For {campaign.get('audience', 'buyers')}, {offer} should connect directly to {objective}.\n\n"
+        "A useful evaluation question:\n"
+        f"Can this approach show a measurable before/after result in the {stage} stage of the buying journey?\n\n"
+        f"{brand} is building around that standard.\n\n"
+        f"CTA: {cta}"
+    )
+
+
+def x_thread_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str) -> str:
+    offer = campaign.get("offer", "the offer")
+    return (
+        f"1/ {theme}: most teams do not need more dashboards. They need a clearer path from problem to action.\n\n"
+        f"2/ For {campaign.get('audience', 'buyers')}, {offer} should make the operational decision easier, not just add another tool.\n\n"
+        f"3/ In the {stage} stage, the best content proves one thing: what changes after adoption?\n\n"
+        f"4/ {brand} campaign CTA: {campaign.get('cta', 'Learn more')}"
+    )
+
+
+def youtube_script_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str) -> str:
+    return (
+        f"Title: {theme} - {brand} demo\n\n"
+        "Hook: Show the costly before-state in the first 10 seconds.\n"
+        f"Problem: Explain why {campaign.get('audience', 'buyers')} struggle with {campaign.get('objective', 'the goal')}.\n"
+        f"Demo: Walk through how {campaign.get('offer', 'the offer')} changes the workflow.\n"
+        "Proof: Show the measurable result, comparison, or operator quote.\n"
+        f"CTA: {campaign.get('cta', 'Book a demo')}.\n"
+        f"Stage: {stage}"
+    )
+
+
+def blog_brief_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str) -> str:
+    offer = campaign.get("offer", "solution")
+    return (
+        f"SEO Title: {theme}: How {campaign.get('audience', 'buyers')} Evaluate {offer}\n"
+        f"Meta Description: Learn how to evaluate {offer}, what outcomes matter, and how {brand} supports {campaign.get('objective', 'better results')}.\n\n"
+        "Outline:\n"
+        f"- Why {theme.lower()} matters now\n"
+        f"- Common mistakes when evaluating {offer}\n"
+        "- What metrics to compare\n"
+        "- Example workflow or use case\n"
+        f"- CTA: {campaign.get('cta', 'Talk to an expert')}\n"
+        f"Search stage: {stage}"
+    )
+
+
+def email_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str) -> str:
+    return (
+        f"Subject: A practical way to think about {theme.lower()}\n\n"
+        f"Hi,\n\nTeams trying to {campaign.get('objective', 'improve results')} often start with tools, but the better starting point is the workflow.\n\n"
+        f"{campaign.get('offer', 'Our offer')} is designed to help {campaign.get('audience', 'your team')} move from uncertainty to a clear next action.\n\n"
+        f"If useful, {brand} can walk through the before/after workflow.\n\n"
+        f"{campaign.get('cta', 'Book a consultation')}\n\n"
+        f"Stage: {stage}"
+    )
+
+
+def discord_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str) -> str:
+    return (
+        f"New campaign note from {brand}: {theme}\n\n"
+        f"We are focusing on {campaign.get('objective', 'the campaign goal')} for {campaign.get('audience', 'our audience')}.\n"
+        f"Core offer: {campaign.get('offer', 'the offer')}.\n"
+        f"Next step: {campaign.get('cta', 'Learn more')}.\n\n"
+        f"This is a {stage} stage message for review."
+    )
+
+
+def generic_social_draft(brand: str, campaign: dict[str, Any], theme: str, stage: str, channel: str) -> str:
+    return (
+        f"{brand} - {theme}\n\n"
+        f"For {campaign.get('audience', 'buyers')}, {campaign.get('offer', 'the offer')} should support {campaign.get('objective', 'the goal')}.\n\n"
+        f"{campaign.get('cta', 'Learn more')}\n\n"
+        f"Channel: {channel}. Stage: {stage}."
+    )
+
+
 def parse_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -421,6 +765,56 @@ def render_campaign_markdown(campaign: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_content_plan_markdown(plan: dict[str, Any]) -> str:
+    lines = [
+        f"# Content Calendar: {plan['campaign']}",
+        "",
+        f"- Weeks: {plan['weeks']}",
+        f"- Cadence: {plan['cadencePerWeek']} items per week",
+        "- Channels: " + ", ".join(plan["channels"]),
+        "- Approval: required before publishing",
+        "",
+        "## Calendar",
+    ]
+    for item in plan["items"]:
+        lines.extend(
+            [
+                f"### Week {item['week']} / Slot {item['slot']}: {item['channel']}",
+                f"- Stage: {item['stage']}",
+                f"- Theme: {item['theme']}",
+                f"- Format: {item['format']}",
+                f"- Angle: {item['angle']}",
+                f"- CTA: {item['cta']}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_drafts_markdown(drafts: dict[str, Any]) -> str:
+    lines = [
+        f"# Content Drafts: {drafts['campaign']}",
+        "",
+        "- Status: draft for review",
+        "- Approval: required before publishing",
+        "",
+    ]
+    for draft in drafts["drafts"]:
+        lines.extend(
+            [
+                f"## {draft['channel']} - {draft['theme']}",
+                "",
+                f"- Format: {draft['format']}",
+                f"- Stage: {draft['stage']}",
+                f"- Tone: {draft['tone']}",
+                "",
+                draft["content"],
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -447,6 +841,23 @@ def build_parser() -> argparse.ArgumentParser:
     campaign.add_argument("--duration", default="4 weeks", help="Campaign duration.")
     campaign.add_argument("--cta", default="Book a consultation", help="Campaign call to action.")
     campaign.set_defaults(func=create_campaign)
+
+    content_plan = subparsers.add_parser("generate-content-plan", help="Generate a weekly content calendar from a campaign.")
+    content_plan.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    content_plan.add_argument("--campaign", default="", help="Campaign slug. Defaults to latest campaign.")
+    content_plan.add_argument("--weeks", type=int, default=4, help="Number of weeks to plan.")
+    content_plan.add_argument("--cadence", type=int, default=3, help="Content items per week.")
+    content_plan.add_argument("--channels", default="", help="Comma-separated channel override.")
+    content_plan.set_defaults(func=generate_content_plan)
+
+    posts = subparsers.add_parser("generate-posts", help="Generate platform-specific draft content from a campaign.")
+    posts.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    posts.add_argument("--campaign", default="", help="Campaign slug. Defaults to latest campaign.")
+    posts.add_argument("--channels", default="", help="Comma-separated channels, such as LinkedIn,X,SEO blog,Email.")
+    posts.add_argument("--count", type=int, default=1, help="Drafts per channel.")
+    posts.add_argument("--theme", default="", help="Optional content theme override.")
+    posts.add_argument("--stage", choices=("awareness", "consideration", "conversion", ""), default="", help="Funnel stage override.")
+    posts.set_defaults(func=generate_posts)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

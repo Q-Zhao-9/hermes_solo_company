@@ -44,3 +44,10 @@ Return:
 
 The campaign is a plan and content brief. Publishing, email sending, ad spend,
 and CRM updates require explicit approval.
+
+After the campaign is created, use Phase 2 helpers:
+
+```bash
+scripts/marketing_agency.py generate-content-plan --project-dir "<project dir>" --campaign "<campaign-slug>"
+scripts/marketing_agency.py generate-posts --project-dir "<project dir>" --campaign "<campaign-slug>" --channels "LinkedIn,X,SEO blog,Email"
+```

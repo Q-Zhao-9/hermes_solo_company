@@ -19,6 +19,19 @@ It does not publish social posts, send emails, run ads, update CRM records, or
 reply to customers. Those actions require later integrations and explicit
 approval.
 
+## What Phase 2 Adds
+
+Phase 2 adds review-ready content planning:
+
+- weekly content calendars
+- campaign-to-channel adaptation
+- LinkedIn drafts
+- X/Twitter thread drafts
+- SEO blog briefs
+- YouTube script outlines
+- email nurture drafts
+- Discord/community announcements
+
 ## Common Flow
 
 Create a strategy:
@@ -50,16 +63,40 @@ Return a Discord-friendly status:
 scripts/marketing_agency.py summary --project-dir generated-marketing/acme-lidar
 ```
 
+Generate a content calendar:
+
+```bash
+scripts/marketing_agency.py generate-content-plan \
+  --project-dir generated-marketing/acme-lidar \
+  --weeks 4 \
+  --cadence 3 \
+  --channels "LinkedIn,X,SEO blog,Email"
+```
+
+Generate review-ready drafts:
+
+```bash
+scripts/marketing_agency.py generate-posts \
+  --project-dir generated-marketing/acme-lidar \
+  --channels "LinkedIn,X,SEO blog,Email,YouTube demos" \
+  --count 1 \
+  --stage consideration
+```
+
 ## Generated Files
 
 ```text
 docs/marketing-strategy.md
 docs/campaigns/<campaign-slug>.md
+docs/content/<campaign-slug>-content-calendar.md
+docs/content/<campaign-slug>-content-calendar.json
+docs/content/drafts/<campaign-slug>-drafts.md
+docs/content/drafts/<campaign-slug>-drafts.json
 docs/hermes-marketing-state.json
 ```
 
-The state file records strategy and campaign history so later phases can create
-content calendars, social posts, lead scorecards, analytics reports, and review
+The state file records strategy, campaign, content calendar, and draft history
+so later phases can create lead scorecards, analytics reports, and review
 dashboards from the same memory.
 
 ## Recommended Bot Behavior
@@ -84,14 +121,13 @@ Draft by default. Ask for explicit approval before:
 - writing CRM records
 - changing production website, WordPress, or Shopify content
 
-## Phase 2 Preview
+## Phase 3 Preview
 
-The next phase should add content generation:
+The next phase should add SEO/GEO depth:
 
-- weekly content plans
-- LinkedIn posts
-- X threads
-- blog outlines
-- video scripts
-- email sequences
-- platform adaptation from one campaign theme
+- keyword clusters
+- blog briefs by search intent
+- AI answer engine optimization
+- schema recommendations
+- landing page SEO tasks
+- internal linking plan

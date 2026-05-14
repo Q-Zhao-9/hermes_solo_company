@@ -123,3 +123,107 @@ def test_summary_returns_discord_friendly_marketing_status(tmp_path):
     assert result["ok"] is True
     assert "**Marketing Status: Acme AI**" in result["summary"]
     assert "Latest campaign: `Ops Automation Launch`" in result["summary"]
+
+
+def test_generate_content_plan_creates_calendar_and_state(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+    )
+
+    result = run_script(
+        "generate-content-plan",
+        "--project-dir",
+        str(project_dir),
+        "--weeks",
+        "2",
+        "--cadence",
+        "2",
+        "--channels",
+        "LinkedIn,YouTube demos",
+    )
+
+    calendar = Path(result["planPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert len(result["plan"]["items"]) == 4
+    assert result["plan"]["items"][0]["channel"] == "LinkedIn"
+    assert result["plan"]["items"][0]["approvalStatus"] == "draft"
+    assert "Content Calendar: Reduce Loading Loss" in calendar
+    assert state["workflowState"] == "content_plan_ready"
+    assert state["lastContentPlan"]["campaignSlug"] == "reduce-loading-loss"
+
+
+def test_generate_posts_creates_platform_drafts_and_summary_tracks_them(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+        "--cta",
+        "Book a measurement demo",
+    )
+
+    result = run_script(
+        "generate-posts",
+        "--project-dir",
+        str(project_dir),
+        "--channels",
+        "LinkedIn,X,SEO blog,Email",
+        "--count",
+        "1",
+        "--stage",
+        "consideration",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    drafts_md = Path(result["draftPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    channels = [draft["channel"] for draft in result["drafts"]["drafts"]]
+    assert result["ok"] is True
+    assert channels == ["LinkedIn", "X", "SEO blog", "Email"]
+    assert "CTA: Book a measurement demo" in drafts_md
+    assert "SEO Title:" in drafts_md
+    assert state["workflowState"] == "content_drafts_ready"
+    assert state["lastContentDrafts"]["approvalRequired"] is True
+    assert "Content drafts: `4` ready for review" in summary["summary"]
