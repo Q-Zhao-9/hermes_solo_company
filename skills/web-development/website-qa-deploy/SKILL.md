@@ -76,6 +76,20 @@ docs/hermes-website-state.json
 - **Shopify**: theme or app extension workflow; do not modify checkout without
   explicit scope.
 
+## Approval Workflow
+
+For production deployment or WordPress writes, record the approval request and
+decision in project state:
+
+```bash
+scripts/website_agency.py approval-request --project-dir "<project dir>" --target "<deploy|wordpress-publish>" --reference "<artifact or spec>" --summary "<what the user is approving>"
+scripts/website_agency.py approval-record --project-dir "<project dir>" --target "<deploy|wordpress-publish>" --reference "<artifact or spec>" --decision approved
+```
+
+Use `revision_requested` when the user asks for changes. Do not proceed with
+publish/deploy while the latest matching decision is `revision_requested` or
+`rejected`.
+
 ## WordPress QA
 
 - preview proposed page/post with `wordpress_preview_publish` before publishing

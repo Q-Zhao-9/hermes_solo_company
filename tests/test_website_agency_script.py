@@ -851,6 +851,136 @@ def test_wordpress_publish_calls_mcp_and_records_history(tmp_path, monkeypatch):
     assert state["lastWordPress"]["wordpressId"] == 42
 
 
+def test_approval_request_and_record_update_state(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    request = run_script(
+        "approval-request",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "wordpress-publish",
+        "--reference",
+        "dist/hermes-wordpress/home.json",
+        "--summary",
+        "Approve WordPress Home draft",
+        "--preview-url",
+        "https://sitelet.example/sitelet/home",
+    )
+    decision = run_script(
+        "approval-record",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "wordpress-publish",
+        "--reference",
+        "dist/hermes-wordpress/home.json",
+        "--decision",
+        "approved",
+        "--approver",
+        "client",
+        "--notes",
+        "Looks good",
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert request["approval"]["decision"] == "pending"
+    assert decision["approval"]["decision"] == "approved"
+    assert state["workflowState"] == "approved_for_publish"
+    assert state["lastApproval"]["approver"] == "client"
+
+
+def test_wordpress_publish_accepts_recorded_approval(tmp_path, monkeypatch):
+    module = load_module()
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    package = run_script(
+        "wordpress-package",
+        "--project-dir",
+        str(project_dir),
+        "--title",
+        "Family Dental Services",
+        "--slug",
+        "family-dental-services",
+    )
+    run_script(
+        "approval-record",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "wordpress-publish",
+        "--reference",
+        package["specPath"],
+        "--decision",
+        "approved",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "publish_wordpress_content",
+        lambda **kwargs: {
+            "ok": True,
+            "id": 42,
+            "status": "draft",
+            "edit_link": "https://wp.example/wp-admin/post.php?post=42&action=edit",
+            "link": "https://wp.example/family-dental-services/",
+            "tool": "create_draft_page",
+        },
+    )
+    result = module.wordpress_publish(
+        argparse.Namespace(
+            project_dir=str(project_dir),
+            spec=package["specPath"],
+            title="",
+            slug="",
+            status="",
+            excerpt="",
+            content="",
+            content_file="",
+            content_type="page",
+            wordpress_id=0,
+            no_update_existing=False,
+            mcp_url="https://wp.example/wp-json/hermes-mcp/v1/mcp",
+            mcp_token="token",
+            approved=False,
+        )
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert state["workflowState"] == "published"
+    assert state["lastWordPress"]["approval"].startswith("wordpress-publish-")
+
+
 def test_publish_wordpress_content_updates_existing_page(monkeypatch):
     module = load_module()
     calls = []

@@ -55,7 +55,9 @@ scripts/website_agency.py deploy-prep --project-dir generated-sites/acme-dental 
 scripts/website_agency.py summary --project-dir generated-sites/acme-dental
 scripts/website_agency.py wordpress-package --project-dir generated-sites/acme-dental --title "Home" --slug home
 scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
-scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json --approved
+scripts/website_agency.py approval-request --project-dir generated-sites/acme-dental --target wordpress-publish --reference dist/hermes-wordpress/home.json --summary "Approve WordPress Home draft"
+scripts/website_agency.py approval-record --project-dir generated-sites/acme-dental --target wordpress-publish --reference dist/hermes-wordpress/home.json --decision approved
+scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
 ```
 
 ## Preview Sharing
@@ -86,6 +88,21 @@ This records:
 - edit/style revisions
 - deployment preparation
 - WordPress package and preview events
+- approval requests and decisions
+
+## Approval Workflow
+
+Before writing to WordPress or deploying production changes, record the approval
+request and final decision:
+
+```bash
+scripts/website_agency.py approval-request --project-dir generated-sites/acme-dental --target wordpress-publish --reference dist/hermes-wordpress/home.json --summary "Approve WordPress Home draft"
+scripts/website_agency.py approval-record --project-dir generated-sites/acme-dental --target wordpress-publish --reference dist/hermes-wordpress/home.json --decision approved --approver "client"
+```
+
+Use `--decision revision_requested` when the user wants changes. The project
+state tracks `approval_requested`, `approved_for_publish`,
+`revision_requested`, and `published`.
 
 ## WordPress
 
@@ -107,12 +124,12 @@ Hermes MCP WordPress plugin:
 ```bash
 export WORDPRESS_MCP_URL="https://example.com/wp-json/hermes-mcp/v1/mcp"
 export WORDPRESS_MCP_TOKEN="your-plugin-token"
-scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json --approved
+scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
 ```
 
 This creates Gutenberg-style content in `dist/hermes-wordpress/`, records the
-event in `docs/hermes-website-state.json`, and requires `--approved` before
-writing to WordPress.
+event in `docs/hermes-website-state.json`, and requires a recorded approval or
+the explicit `--approved` override before writing to WordPress.
 
 ## Templates
 

@@ -1100,6 +1100,10 @@ def format_discord_summary(project_dir: Path, state: dict[str, Any]) -> str:
     if preview.get("publicUrl"):
         lines.append(f"Preview: {preview['publicUrl']}")
 
+    approval = state.get("lastApproval", {}) if isinstance(state.get("lastApproval"), dict) else {}
+    if approval.get("decision"):
+        lines.append(f"Approval: `{approval['decision']}` for `{approval.get('target', 'project')}`")
+
     qa = state.get("lastQa", {}) if isinstance(state.get("lastQa"), dict) else {}
     if qa.get("summary"):
         summary = qa["summary"]
@@ -1126,6 +1130,96 @@ def format_discord_summary(project_dir: Path, state: dict[str, Any]) -> str:
     lines.append("")
     lines.append("Next: run `/build-preview`, `/edit-section`, `/seo-optimize`, or `/deploy-site` as needed.")
     return "\n".join(lines)
+
+
+def approval_request(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    reference = normalize_approval_reference(project_dir, args.reference)
+    request = {
+        "id": approval_id(args.target, reference),
+        "type": "approval-request",
+        "target": args.target,
+        "reference": reference,
+        "summary": args.summary,
+        "previewUrl": args.preview_url or latest_preview_url(project_dir),
+        "decision": "pending",
+    }
+    record_approval(project_dir, request)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "approval": request,
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Approval request recorded. Share the preview and record the decision with approval-record.",
+    }
+
+
+def approval_record(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    reference = normalize_approval_reference(project_dir, args.reference)
+    decision = {
+        "id": approval_id(args.target, reference),
+        "type": "approval-decision",
+        "target": args.target,
+        "reference": reference,
+        "decision": args.decision,
+        "approver": args.approver,
+        "notes": args.notes,
+    }
+    record_approval(project_dir, decision)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "approval": decision,
+        "statePath": str(project_dir / STATE_PATH),
+        "message": f"Approval decision recorded: {args.decision}.",
+    }
+
+
+def approval_id(target: str, reference: str) -> str:
+    return slugify(f"{target}-{reference}", fallback=target)
+
+
+def normalize_approval_reference(project_dir: Path, reference: str) -> str:
+    value = (reference or "").strip()
+    if not value:
+        preview = read_state(project_dir / STATE_PATH).get("lastPreview", {})
+        if isinstance(preview, dict) and preview.get("publicUrl"):
+            return str(preview["publicUrl"])
+        return "project"
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        try:
+            return str(path.resolve().relative_to(project_dir))
+        except ValueError:
+            return str(path)
+    return value
+
+
+def latest_preview_url(project_dir: Path) -> str:
+    state = read_state(project_dir / STATE_PATH)
+    preview = state.get("lastPreview", {}) if isinstance(state.get("lastPreview"), dict) else {}
+    return str(preview.get("publicUrl") or preview.get("siteletUrl") or preview.get("generatedUrl") or "")
+
+
+def has_approval(project_dir: Path, target: str, reference: str) -> bool:
+    state = read_state(project_dir / STATE_PATH)
+    expected_id = approval_id(target, normalize_approval_reference(project_dir, reference))
+    approvals = state.get("approvals", [])
+    if not isinstance(approvals, list):
+        return False
+    for item in reversed(approvals):
+        if not isinstance(item, dict):
+            continue
+        if item.get("id") == expected_id and item.get("decision") in {"revision_requested", "rejected"}:
+            return False
+        if item.get("id") == expected_id and item.get("decision") == "approved":
+            return True
+    return False
 
 
 def deploy_prep(args: argparse.Namespace) -> dict[str, Any]:
@@ -1305,10 +1399,13 @@ def wordpress_publish(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists():
         return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
-    if not args.approved:
+    if not args.approved and not has_approval(project_dir, "wordpress-publish", args.spec):
         return {
             "ok": False,
-            "error": "Publishing to WordPress requires explicit approval. Re-run with --approved after the preview is approved.",
+            "error": (
+                "Publishing to WordPress requires explicit approval. "
+                "Record approval with approval-record or re-run with --approved after the preview is approved."
+            ),
         }
 
     try:
@@ -1346,6 +1443,7 @@ def wordpress_publish(args: argparse.Namespace) -> dict[str, Any]:
         "editUrl": result.get("edit_link"),
         "publicUrl": result.get("link"),
         "tool": result.get("tool"),
+        "approval": "flag" if args.approved else approval_id("wordpress-publish", normalize_approval_reference(project_dir, args.spec)),
         "ok": bool(result.get("ok")),
     }
     record_wordpress(project_dir, record)
@@ -2503,6 +2601,7 @@ def record_preview(project_dir: Path, preview: dict[str, Any], attempts: list[di
         }
     )
     state["lastPreview"] = preview
+    state["workflowState"] = "preview_shared"
     write_text(state_file, json.dumps(state, indent=2))
 
 
@@ -2548,6 +2647,7 @@ def record_revision(project_dir: Path, revision: dict[str, Any]) -> None:
     record["createdAt"] = datetime.now(timezone.utc).isoformat()
     revisions.append(record)
     state["lastRevision"] = record
+    state["workflowState"] = "revision_in_progress"
     write_text(state_file, json.dumps(state, indent=2))
 
 
@@ -2570,6 +2670,30 @@ def record_wordpress(project_dir: Path, event: dict[str, Any]) -> None:
     record["createdAt"] = datetime.now(timezone.utc).isoformat()
     events.append(record)
     state["lastWordPress"] = record
+    if record.get("type") == "wordpress-preview" and record.get("ok"):
+        state["workflowState"] = "preview_shared"
+    elif record.get("type") == "wordpress-publish" and record.get("ok"):
+        state["workflowState"] = "published"
+    write_text(state_file, json.dumps(state, indent=2))
+
+
+def record_approval(project_dir: Path, event: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    approvals = state.setdefault("approvals", [])
+    record = dict(event)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    approvals.append(record)
+    state["lastApproval"] = record
+    decision = record.get("decision")
+    if decision == "pending":
+        state["workflowState"] = "approval_requested"
+    elif decision == "approved":
+        state["workflowState"] = "approved_for_publish"
+    elif decision == "revision_requested":
+        state["workflowState"] = "revision_requested"
+    elif decision == "rejected":
+        state["workflowState"] = "approval_rejected"
     write_text(state_file, json.dumps(state, indent=2))
 
 
@@ -2723,6 +2847,23 @@ def build_parser() -> argparse.ArgumentParser:
     wp_publish.add_argument("--mcp-token", default=os.getenv("WORDPRESS_MCP_TOKEN", os.getenv("HERMES_WORDPRESS_MCP_TOKEN", "")))
     wp_publish.add_argument("--approved", action="store_true", help="Required acknowledgement that the preview was approved.")
     wp_publish.set_defaults(func=wordpress_publish)
+
+    approval_req = subparsers.add_parser("approval-request", help="Record a preview approval request.")
+    approval_req.add_argument("--project-dir", default=".", help="Website project directory.")
+    approval_req.add_argument("--target", default="publish", help="Action needing approval, such as wordpress-publish or deploy.")
+    approval_req.add_argument("--reference", default="", help="Spec path, preview URL, deployment artifact, or project reference.")
+    approval_req.add_argument("--summary", default="", help="Short approval request summary.")
+    approval_req.add_argument("--preview-url", default="", help="Preview URL shown to the approver.")
+    approval_req.set_defaults(func=approval_request)
+
+    approval_rec = subparsers.add_parser("approval-record", help="Record an approval, rejection, or revision request.")
+    approval_rec.add_argument("--project-dir", default=".", help="Website project directory.")
+    approval_rec.add_argument("--target", default="publish", help="Action being approved, such as wordpress-publish or deploy.")
+    approval_rec.add_argument("--reference", default="", help="Spec path, preview URL, deployment artifact, or project reference.")
+    approval_rec.add_argument("--decision", choices=("approved", "revision_requested", "rejected"), required=True)
+    approval_rec.add_argument("--approver", default="", help="Person or channel that approved/rejected.")
+    approval_rec.add_argument("--notes", default="", help="Decision notes.")
+    approval_rec.set_defaults(func=approval_record)
 
     sections = subparsers.add_parser("list-sections", help="List editable sections in a generated website.")
     sections.add_argument("--project-dir", default=".", help="Website project directory.")
