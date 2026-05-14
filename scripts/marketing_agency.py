@@ -5,9 +5,10 @@ Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
 and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. Phase 4
 adds lead signal definitions, lead scoring, outreach drafts, and CRM export.
 Phase 5 adds performance snapshots, optimization recommendations, and manager
-dashboards. Phase 6 adds competitor intelligence and trend watch reports. It
-avoids network access and does not publish, message, email, update CRM records,
-or modify external systems.
+dashboards. Phase 6 adds competitor intelligence and trend watch reports.
+Phase 7 adds approval packages, execution queues, change logs, and operator
+handoffs. It avoids network access and does not publish, message, email, update
+CRM records, or modify external systems.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ SEO_DIR = Path("docs") / "seo"
 LEADS_DIR = Path("docs") / "leads"
 ANALYTICS_DIR = Path("docs") / "analytics"
 COMPETITOR_DIR = Path("docs") / "competitors"
+EXECUTION_DIR = Path("docs") / "execution"
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,9 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("competitors", [])
     data.setdefault("competitorObservations", [])
     data.setdefault("competitorReports", [])
+    data.setdefault("approvalPackages", [])
+    data.setdefault("approvalDecisions", [])
+    data.setdefault("operatorHandoffs", [])
     return data
 
 
@@ -112,6 +117,9 @@ def default_state() -> dict[str, Any]:
         "competitors": [],
         "competitorObservations": [],
         "competitorReports": [],
+        "approvalPackages": [],
+        "approvalDecisions": [],
+        "operatorHandoffs": [],
     }
 
 
@@ -629,6 +637,97 @@ def competitor_report(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def create_approval_package(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    package = build_approval_package(
+        state,
+        channels=parse_list(args.channels),
+        owner=args.owner,
+        due=args.due,
+        scope=args.scope,
+    )
+    package_path = project_dir / EXECUTION_DIR / "approval-package.md"
+    package_json_path = project_dir / EXECUTION_DIR / "approval-package.json"
+    queue_path = project_dir / EXECUTION_DIR / "publishing-queue.json"
+    write_text(package_path, render_approval_package_markdown(package))
+    write_text(package_json_path, json.dumps(package, indent=2))
+    write_text(queue_path, json.dumps(package["publishingQueue"], indent=2))
+    record_approval_package(project_dir, {**package, "path": str(package_path), "queuePath": str(queue_path)})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "approvalPackage": package,
+        "approvalPackagePath": str(package_path),
+        "approvalPackageJsonPath": str(package_json_path),
+        "publishingQueuePath": str(queue_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Approval package created. Execution still requires explicit approval and external publishing tools.",
+    }
+
+
+def record_approval(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    package = select_approval_package(state, args.package_id)
+    if not package:
+        return {"ok": False, "error": "No approval package found. Run create-approval-package first."}
+    decision = build_approval_decision(
+        package=package,
+        decision=args.decision,
+        approver=args.approver,
+        notes=args.notes,
+    )
+    decisions = [item for item in state.get("approvalDecisions", []) if isinstance(item, dict)]
+    decisions.append(decision)
+    change_log_path = project_dir / EXECUTION_DIR / "approval-change-log.md"
+    change_log_json_path = project_dir / EXECUTION_DIR / "approval-change-log.json"
+    write_text(change_log_path, render_change_log_markdown(decisions))
+    write_text(change_log_json_path, json.dumps(decisions, indent=2))
+    record_approval_decision(project_dir, decision)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "approvalDecision": decision,
+        "approvalChangeLogPath": str(change_log_path),
+        "approvalChangeLogJsonPath": str(change_log_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Approval decision recorded in local change log.",
+    }
+
+
+def operator_handoff(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    package = select_approval_package(state, args.package_id)
+    if not package:
+        return {"ok": False, "error": "No approval package found. Run create-approval-package first."}
+    handoff = build_operator_handoff(state, package=package, operator=args.operator)
+    handoff_path = project_dir / EXECUTION_DIR / "operator-handoff.md"
+    handoff_json_path = project_dir / EXECUTION_DIR / "operator-handoff.json"
+    write_text(handoff_path, render_operator_handoff_markdown(handoff))
+    write_text(handoff_json_path, json.dumps(handoff, indent=2))
+    record_operator_handoff(project_dir, {**handoff, "path": str(handoff_path)})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "operatorHandoff": handoff,
+        "operatorHandoffPath": str(handoff_path),
+        "operatorHandoffJsonPath": str(handoff_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Operator handoff generated for human execution.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -657,6 +756,16 @@ def select_competitor(state: dict[str, Any], competitor_id_or_name: str) -> dict
     for competitor in competitors:
         if str(competitor.get("id", "")).lower() == needle or str(competitor.get("name", "")).lower() == needle:
             return competitor
+    return {}
+
+
+def select_approval_package(state: dict[str, Any], package_id: str) -> dict[str, Any]:
+    packages = [item for item in state.get("approvalPackages", []) if isinstance(item, dict)]
+    if not package_id and packages:
+        return packages[-1]
+    for package in packages:
+        if str(package.get("id", "")) == package_id:
+            return package
     return {}
 
 
@@ -1571,6 +1680,159 @@ def upsert_by_id(items: list[dict[str, Any]], item: dict[str, Any]) -> list[dict
     return output
 
 
+def build_approval_package(
+    state: dict[str, Any],
+    *,
+    channels: list[str],
+    owner: str,
+    due: str,
+    scope: str,
+) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    campaign = state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}
+    active_channels = channels or [str(channel) for channel in campaign.get("channels", []) if str(channel).strip()] or [str(channel) for channel in strategy.get("channels", [])[:3]]
+    queue = build_publishing_queue(state, active_channels, scope=scope)
+    package_id = slugify(f"approval-{campaign.get('slug') or strategy.get('brand') or 'marketing'}-{datetime.now(timezone.utc).isoformat()}", fallback="approval-package")
+    return {
+        "type": "approval-package",
+        "id": package_id,
+        "brand": strategy.get("brand", ""),
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "scope": scope or "campaign execution",
+        "owner": owner,
+        "due": due,
+        "channels": active_channels,
+        "publishingQueue": queue,
+        "executionChecklists": build_execution_checklists(active_channels),
+        "riskReview": build_execution_risk_review(queue),
+        "approvalStatus": "pending",
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_publishing_queue(state: dict[str, Any], channels: list[str], *, scope: str) -> list[dict[str, Any]]:
+    queue: list[dict[str, Any]] = []
+    drafts = state.get("lastContentDrafts", {}) if isinstance(state.get("lastContentDrafts"), dict) else {}
+    for draft in drafts.get("drafts", []) if isinstance(drafts.get("drafts"), list) else []:
+        if not channels or str(draft.get("channel", "")) in channels:
+            queue.append(
+                {
+                    "id": draft.get("id", ""),
+                    "source": "content-draft",
+                    "channel": draft.get("channel", ""),
+                    "title": f"{draft.get('theme', '')} - {draft.get('stage', '')}",
+                    "action": "publish after approval",
+                    "status": "pending_approval",
+                }
+            )
+    blog_briefs = state.get("lastBlogBriefs", {}) if isinstance(state.get("lastBlogBriefs"), dict) else {}
+    for brief in blog_briefs.get("briefs", []) if isinstance(blog_briefs.get("briefs"), list) else []:
+        if scope in {"", "campaign execution", "all", "seo", "blog"}:
+            queue.append(
+                {
+                    "id": brief.get("slug", ""),
+                    "source": "blog-brief",
+                    "channel": "SEO blog",
+                    "title": brief.get("title", ""),
+                    "action": "write and publish after approval",
+                    "status": "pending_approval",
+                }
+            )
+    for draft in state.get("outreachDrafts", []):
+        if isinstance(draft, dict) and (not channels or str(draft.get("channel", "")) in channels or "Email" in channels):
+            queue.append(
+                {
+                    "id": draft.get("id", ""),
+                    "source": "outreach-draft",
+                    "channel": draft.get("channel", ""),
+                    "title": draft.get("subject", ""),
+                    "action": "send after approval",
+                    "status": "pending_approval",
+                }
+            )
+    competitor_report_data = state.get("lastCompetitorReport", {}) if isinstance(state.get("lastCompetitorReport"), dict) else {}
+    for campaign in competitor_report_data.get("responseCampaigns", []) if isinstance(competitor_report_data.get("responseCampaigns"), list) else []:
+        queue.append(
+            {
+                "id": slugify(str(campaign.get("name", "response-campaign")), fallback="response-campaign"),
+                "source": "competitor-response",
+                "channel": ", ".join(campaign.get("channels", [])),
+                "title": campaign.get("name", ""),
+                "action": "plan response assets after approval",
+                "status": "pending_approval",
+            }
+        )
+    return queue
+
+
+def build_execution_checklists(channels: list[str]) -> list[dict[str, Any]]:
+    return [{"channel": channel, "items": checklist_for_channel(channel)} for channel in channels]
+
+
+def checklist_for_channel(channel: str) -> list[str]:
+    lowered = channel.lower()
+    common = ["Confirm final copy and CTA.", "Confirm owner and publishing time.", "Capture final URL or screenshot after execution."]
+    if "linkedin" in lowered:
+        return ["Verify post formatting and link preview.", "Confirm company or personal profile target.", *common]
+    if lowered in {"x", "twitter"} or "x/" in lowered:
+        return ["Check thread numbering and character length.", "Confirm hashtags and mention policy.", *common]
+    if "email" in lowered:
+        return ["Confirm recipient list and suppression rules.", "Send test email before production send.", *common]
+    if "blog" in lowered or "seo" in lowered:
+        return ["Confirm title, meta description, schema, and internal links.", "Run final grammar and SEO review.", *common]
+    if "youtube" in lowered:
+        return ["Confirm video file, title, description, thumbnail, and chapters.", "Check links in description.", *common]
+    return common
+
+
+def build_execution_risk_review(queue: list[dict[str, Any]]) -> list[str]:
+    risks = ["No item should be executed without explicit approval."]
+    if any(item.get("source") == "outreach-draft" for item in queue):
+        risks.append("Outreach items may contact real people; confirm recipient and consent policy before sending.")
+    if any("SEO" in str(item.get("channel", "")) or item.get("source") == "blog-brief" for item in queue):
+        risks.append("Publishing SEO/blog content may affect live site quality; confirm final editorial review.")
+    if any(item.get("source") == "competitor-response" for item in queue):
+        risks.append("Competitor response should stay factual and avoid unsupported claims.")
+    return risks
+
+
+def build_approval_decision(*, package: dict[str, Any], decision: str, approver: str, notes: str) -> dict[str, Any]:
+    return {
+        "type": "approval-decision",
+        "id": slugify(f"decision-{package.get('id', 'package')}-{datetime.now(timezone.utc).isoformat()}", fallback="approval-decision"),
+        "packageId": package.get("id", ""),
+        "decision": decision,
+        "approver": approver,
+        "notes": notes.strip(),
+        "queueItemCount": len(package.get("publishingQueue", [])),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_operator_handoff(state: dict[str, Any], *, package: dict[str, Any], operator: str) -> dict[str, Any]:
+    decisions = [item for item in state.get("approvalDecisions", []) if isinstance(item, dict) and item.get("packageId") == package.get("id")]
+    latest_decision = decisions[-1] if decisions else {}
+    return {
+        "type": "operator-handoff",
+        "id": slugify(f"handoff-{package.get('id', 'package')}", fallback="operator-handoff"),
+        "packageId": package.get("id", ""),
+        "operator": operator,
+        "approvalDecision": latest_decision,
+        "publishingQueue": package.get("publishingQueue", []),
+        "executionChecklists": package.get("executionChecklists", []),
+        "requiredEvidence": [
+            "Final published URL or platform permalink.",
+            "Screenshot or export showing the published/sent asset.",
+            "Execution timestamp and operator name.",
+            "Any deviation from the approved copy or queue.",
+        ],
+        "handoffStatus": "ready" if latest_decision.get("decision") == "approved" else "waiting_for_approval",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -1661,8 +1923,14 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
         lines.append(
             f"Competitor report: `{competitor_report_data.get('competitorCount')}` competitors, `{competitor_report_data.get('observationCount', 0)}` observations"
         )
+    approval = state.get("lastApprovalPackage", {}) if isinstance(state.get("lastApprovalPackage"), dict) else {}
+    if approval.get("id"):
+        lines.append(f"Approval package: `{len(approval.get('publishingQueue', []))}` queued items, status `{approval.get('approvalStatus', 'pending')}`")
+    handoff = state.get("lastOperatorHandoff", {}) if isinstance(state.get("lastOperatorHandoff"), dict) else {}
+    if handoff.get("id"):
+        lines.append(f"Operator handoff: `{handoff.get('handoffStatus', 'waiting_for_approval')}`")
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, or track competitors.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, or package execution.")
     return "\n".join(lines)
 
 
@@ -1784,6 +2052,35 @@ def record_competitor_report(project_dir: Path, report: dict[str, Any]) -> None:
     state.setdefault("competitorReports", []).append(report)
     state["lastCompetitorReport"] = report
     state["workflowState"] = "competitor_report_ready"
+    write_state(project_dir, state)
+
+
+def record_approval_package(project_dir: Path, package: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("approvalPackages", []).append(package)
+    state["lastApprovalPackage"] = package
+    state["workflowState"] = "approval_package_ready"
+    write_state(project_dir, state)
+
+
+def record_approval_decision(project_dir: Path, decision: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("approvalDecisions", []).append(decision)
+    if decision.get("packageId"):
+        for package in state.get("approvalPackages", []):
+            if isinstance(package, dict) and package.get("id") == decision["packageId"]:
+                package["approvalStatus"] = decision["decision"]
+                state["lastApprovalPackage"] = package
+    state["lastApprovalDecision"] = decision
+    state["workflowState"] = "approval_decision_recorded"
+    write_state(project_dir, state)
+
+
+def record_operator_handoff(project_dir: Path, handoff: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("operatorHandoffs", []).append(handoff)
+    state["lastOperatorHandoff"] = handoff
+    state["workflowState"] = "operator_handoff_ready"
     write_state(project_dir, state)
 
 
@@ -2611,6 +2908,75 @@ def render_competitor_report_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_approval_package_markdown(package: dict[str, Any]) -> str:
+    lines = [
+        f"# Approval Package: {package.get('campaign') or package.get('brand')}",
+        "",
+        f"- Package ID: {package.get('id', '')}",
+        f"- Scope: {package.get('scope', '')}",
+        f"- Owner: {package.get('owner', '')}",
+        f"- Due: {package.get('due', '')}",
+        f"- Status: {package.get('approvalStatus', '')}",
+        "- Approval: required before execution",
+        "",
+        "## Publishing Queue",
+    ]
+    for item in package.get("publishingQueue", []):
+        lines.append(f"- [{item.get('status', '')}] {item.get('source', '')} / {item.get('channel', '')}: {item.get('title', '')} ({item.get('action', '')})")
+    lines.extend(["", "## Execution Checklists"])
+    for checklist in package.get("executionChecklists", []):
+        lines.append(f"### {checklist.get('channel', '')}")
+        lines.extend(f"- {item}" for item in checklist.get("items", []))
+        lines.append("")
+    lines.append("## Risk Review")
+    lines.extend(f"- {item}" for item in package.get("riskReview", []))
+    return "\n".join(lines)
+
+
+def render_change_log_markdown(decisions: list[dict[str, Any]]) -> str:
+    lines = ["# Approval Change Log", ""]
+    for decision in decisions:
+        lines.extend(
+            [
+                f"## {decision.get('decision', '')}: {decision.get('packageId', '')}",
+                "",
+                f"- Decision ID: {decision.get('id', '')}",
+                f"- Approver: {decision.get('approver', '')}",
+                f"- Queue items: {decision.get('queueItemCount', 0)}",
+                f"- Created: {decision.get('createdAt', '')}",
+                "",
+                "### Notes",
+                str(decision.get("notes", "")),
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_operator_handoff_markdown(handoff: dict[str, Any]) -> str:
+    decision = handoff.get("approvalDecision", {}) if isinstance(handoff.get("approvalDecision"), dict) else {}
+    lines = [
+        f"# Operator Handoff: {handoff.get('packageId', '')}",
+        "",
+        f"- Operator: {handoff.get('operator', '')}",
+        f"- Status: {handoff.get('handoffStatus', '')}",
+        f"- Approval decision: {decision.get('decision', 'none')}",
+        f"- Approver: {decision.get('approver', '')}",
+        "",
+        "## Execution Queue",
+    ]
+    for item in handoff.get("publishingQueue", []):
+        lines.append(f"- {item.get('channel', '')}: {item.get('title', '')} - {item.get('action', '')}")
+    lines.extend(["", "## Required Evidence"])
+    lines.extend(f"- {item}" for item in handoff.get("requiredEvidence", []))
+    lines.extend(["", "## Checklists"])
+    for checklist in handoff.get("executionChecklists", []):
+        lines.append(f"### {checklist.get('channel', '')}")
+        lines.extend(f"- {item}" for item in checklist.get("items", []))
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2752,6 +3118,28 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--focus", default="competitive intelligence", help="Report focus.")
     report.add_argument("--period", default="latest period", help="Reporting period.")
     report.set_defaults(func=competitor_report)
+
+    approval = subparsers.add_parser("create-approval-package", help="Create a review package and publishing queue for approved execution.")
+    approval.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    approval.add_argument("--channels", default="", help="Comma-separated channels to include.")
+    approval.add_argument("--owner", default="", help="Owner responsible for approval.")
+    approval.add_argument("--due", default="", help="Approval due date or time window.")
+    approval.add_argument("--scope", default="campaign execution", help="Execution scope.")
+    approval.set_defaults(func=create_approval_package)
+
+    approval_decision = subparsers.add_parser("record-approval", help="Record an approval decision in the local change log.")
+    approval_decision.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    approval_decision.add_argument("--package-id", default="", help="Approval package ID. Defaults to latest package.")
+    approval_decision.add_argument("--decision", choices=("approved", "changes_requested", "rejected"), required=True, help="Approval decision.")
+    approval_decision.add_argument("--approver", default="", help="Approver name.")
+    approval_decision.add_argument("--notes", default="", help="Approval notes or required changes.")
+    approval_decision.set_defaults(func=record_approval)
+
+    handoff = subparsers.add_parser("operator-handoff", help="Generate a human operator handoff package for execution.")
+    handoff.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    handoff.add_argument("--package-id", default="", help="Approval package ID. Defaults to latest package.")
+    handoff.add_argument("--operator", default="", help="Human operator name or team.")
+    handoff.set_defaults(func=operator_handoff)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

@@ -728,3 +728,127 @@ def test_track_competitor_creates_observation_and_report_tracks_summary(tmp_path
     assert "Competitive Proof Response" in report_md
     assert state["workflowState"] == "competitor_report_ready"
     assert "Competitor report: `1` competitors, `1` observations" in summary["summary"]
+
+
+def test_create_approval_package_builds_queue_checklists_and_state(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+        "--cta",
+        "Book a measurement demo",
+    )
+    run_script("generate-posts", "--project-dir", str(project_dir), "--channels", "LinkedIn,Email")
+    run_script("generate-blog-briefs", "--project-dir", str(project_dir), "--count", "1")
+
+    result = run_script(
+        "create-approval-package",
+        "--project-dir",
+        str(project_dir),
+        "--channels",
+        "LinkedIn,Email,SEO blog",
+        "--owner",
+        "marketing lead",
+        "--due",
+        "2026-05-20",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    markdown = Path(result["approvalPackagePath"]).read_text(encoding="utf-8")
+    queue = json.loads(Path(result["publishingQueuePath"]).read_text(encoding="utf-8"))
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["approvalPackage"]["approvalRequired"] is True
+    assert len(result["approvalPackage"]["publishingQueue"]) == 3
+    assert len(queue) == 3
+    assert "Approval Package: Reduce Loading Loss" in markdown
+    assert "Execution Checklists" in markdown
+    assert state["workflowState"] == "approval_package_ready"
+    assert "Approval package: `3` queued items" in summary["summary"]
+
+
+def test_record_approval_and_operator_handoff_create_change_log_and_handoff(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+    )
+    run_script("generate-posts", "--project-dir", str(project_dir), "--channels", "LinkedIn")
+    package = run_script("create-approval-package", "--project-dir", str(project_dir), "--channels", "LinkedIn")
+
+    decision = run_script(
+        "record-approval",
+        "--project-dir",
+        str(project_dir),
+        "--package-id",
+        package["approvalPackage"]["id"],
+        "--decision",
+        "approved",
+        "--approver",
+        "Jane",
+        "--notes",
+        "Approved for publishing on LinkedIn.",
+    )
+    handoff = run_script(
+        "operator-handoff",
+        "--project-dir",
+        str(project_dir),
+        "--package-id",
+        package["approvalPackage"]["id"],
+        "--operator",
+        "ops team",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    change_log = Path(decision["approvalChangeLogPath"]).read_text(encoding="utf-8")
+    handoff_md = Path(handoff["operatorHandoffPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert decision["ok"] is True
+    assert decision["approvalDecision"]["decision"] == "approved"
+    assert "Approved for publishing on LinkedIn." in change_log
+    assert handoff["ok"] is True
+    assert handoff["operatorHandoff"]["handoffStatus"] == "ready"
+    assert "Required Evidence" in handoff_md
+    assert state["workflowState"] == "operator_handoff_ready"
+    assert state["lastApprovalPackage"]["approvalStatus"] == "approved"
+    assert "Operator handoff: `ready`" in summary["summary"]

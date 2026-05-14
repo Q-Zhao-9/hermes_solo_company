@@ -326,12 +326,67 @@ The report summarizes competitor profiles, recent observations, positioning
 gaps, market trend topics, and response campaign ideas. It does not browse the
 internet or publish response content by itself.
 
-## Phase 7 Preview
+## What Phase 7 Adds
 
-The next phase can add campaign execution planning:
+Phase 7 adds campaign execution planning:
 
 - approval packages for publish/send/deploy steps
 - channel-specific execution checklists
 - asset-to-channel publishing queue
 - post-approval change log
 - handoff package for human operators
+
+Create an approval package:
+
+```bash
+scripts/marketing_agency.py create-approval-package \
+  --project-dir generated-marketing/acme-lidar \
+  --channels "LinkedIn,Email,SEO blog" \
+  --owner "marketing lead" \
+  --due "2026-05-20"
+```
+
+Record an approval decision:
+
+```bash
+scripts/marketing_agency.py record-approval \
+  --project-dir generated-marketing/acme-lidar \
+  --decision approved \
+  --approver "Jane" \
+  --notes "Approved for LinkedIn and email execution"
+```
+
+Generate a human operator handoff:
+
+```bash
+scripts/marketing_agency.py operator-handoff \
+  --project-dir generated-marketing/acme-lidar \
+  --operator "ops team"
+```
+
+Phase 7 writes:
+
+```text
+docs/execution/approval-package.md
+docs/execution/approval-package.json
+docs/execution/publishing-queue.json
+docs/execution/approval-change-log.md
+docs/execution/approval-change-log.json
+docs/execution/operator-handoff.md
+docs/execution/operator-handoff.json
+docs/hermes-marketing-state.json
+```
+
+These files prepare execution, but they do not execute it. Publishing posts,
+sending email, deploying pages, changing ads, or updating CRM records still
+requires explicit approval and the correct platform integration.
+
+## Phase 8 Preview
+
+The next phase can add platform integration adapters:
+
+- approved social publishing adapters
+- email campaign provider handoff
+- website/WordPress publishing bridge
+- CRM import mapping
+- execution evidence capture

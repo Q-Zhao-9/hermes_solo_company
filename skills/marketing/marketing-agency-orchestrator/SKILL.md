@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -71,6 +71,14 @@ scripts/marketing_agency.py track-competitor --project-dir "<project dir>" --com
 scripts/marketing_agency.py competitor-report --project-dir "<project dir>" --period "<period>"
 ```
 
+Phase 7 supports approval and execution handoff:
+
+```bash
+scripts/marketing_agency.py create-approval-package --project-dir "<project dir>" --channels "LinkedIn,Email,SEO blog"
+scripts/marketing_agency.py record-approval --project-dir "<project dir>" --decision approved --approver "<name>"
+scripts/marketing_agency.py operator-handoff --project-dir "<project dir>" --operator "<team>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -85,6 +93,8 @@ scripts/marketing_agency.py competitor-report --project-dir "<project dir>" --pe
   `record-performance`, and `generate-review-dashboard`.
 - **Competitor intelligence**: use `competitor-intelligence`,
   `add-competitor`, `track-competitor`, and `competitor-report`.
+- **Approval and execution handoff**: use `campaign-execution`,
+  `create-approval-package`, `record-approval`, and `operator-handoff`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.
