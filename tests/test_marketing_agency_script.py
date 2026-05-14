@@ -320,3 +320,162 @@ def test_generate_blog_briefs_uses_seo_plan_and_summary_tracks_them(tmp_path):
     assert state["lastBlogBriefs"]["approvalRequired"] is True
     assert "SEO/GEO plan: `" in summary["summary"]
     assert "Blog briefs: `3` ready for review" in summary["summary"]
+
+
+def test_define_lead_signals_creates_signal_files_and_state(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+
+    result = run_script(
+        "define-lead-signals",
+        "--project-dir",
+        str(project_dir),
+        "--channels",
+        "LinkedIn,Reddit,Industry forums",
+        "--signals",
+        "asking for truck scale alternatives,looking for volume measurement",
+        "--negative-signals",
+        "student research,free only",
+    )
+
+    markdown = Path(result["leadSignalsPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert "Lead Signals: Acme LiDAR" in markdown
+    assert "looking for volume measurement" in result["leadSignals"]["positiveSignals"]
+    assert result["leadSignals"]["channels"] == ["LinkedIn", "Reddit", "Industry forums"]
+    assert Path(result["leadSignalsJsonPath"]).exists()
+    assert state["workflowState"] == "lead_signals_ready"
+    assert state["lastLeadSignals"]["approvalRequired"] is True
+
+
+def test_score_lead_creates_scorecard_and_summary_tracks_it(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script("define-lead-signals", "--project-dir", str(project_dir))
+
+    result = run_script(
+        "score-lead",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Jordan",
+        "--company",
+        "North Ridge Aggregates",
+        "--role",
+        "Operations Manager",
+        "--source",
+        "LinkedIn",
+        "--channel",
+        "LinkedIn",
+        "--text",
+        "We are looking for truck volume measurement to reduce loading losses at our aggregate sites.",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    markdown = Path(result["scorecardsPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["scorecard"]["score"] > 0
+    assert result["scorecard"]["grade"] in {"hot", "warm"}
+    assert "North Ridge Aggregates" in markdown
+    assert "reduce loading losses" in markdown
+    assert state["workflowState"] == "lead_scored"
+    assert state["lastLeadScorecard"]["company"] == "North Ridge Aggregates"
+    assert "Latest lead: `" in summary["summary"]
+
+
+def test_draft_outreach_and_crm_export_create_review_ready_assets(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+        "--cta",
+        "Book a measurement demo",
+    )
+    run_script("define-lead-signals", "--project-dir", str(project_dir))
+    score = run_script(
+        "score-lead",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Jordan",
+        "--company",
+        "North Ridge Aggregates",
+        "--source",
+        "LinkedIn",
+        "--text",
+        "We need a solution to replace manual measurement and improve truck loading accuracy.",
+    )
+
+    outreach = run_script(
+        "draft-outreach",
+        "--project-dir",
+        str(project_dir),
+        "--lead-id",
+        score["scorecard"]["id"],
+        "--channel",
+        "email",
+    )
+    crm = run_script("crm-export", "--project-dir", str(project_dir), "--format", "csv", "--owner", "sales")
+
+    outreach_md = Path(outreach["outreachDraftsPath"]).read_text(encoding="utf-8")
+    crm_csv = Path(crm["crmExportPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert outreach["ok"] is True
+    assert outreach["outreachDraft"]["approvalRequired"] is True
+    assert "Approval: required before sending" in outreach_md
+    assert "Book a measurement demo" in outreach_md
+    assert crm["ok"] is True
+    assert "lead_id,name,company" in crm_csv
+    assert "North Ridge Aggregates" in crm_csv
+    assert state["workflowState"] == "crm_export_ready"
+    assert state["lastCrmExport"]["leadCount"] == 1

@@ -1,7 +1,6 @@
 # Hermes Marketing Agency Student Guide
 
-This guide shows the Phase 1 workflow for the Hermes AI solo company marketing
-agency bot.
+This guide shows the Hermes AI solo company marketing agency bot workflow.
 
 ## What Phase 1 Does
 
@@ -92,7 +91,6 @@ docs/content/<campaign-slug>-content-calendar.md
 docs/content/<campaign-slug>-content-calendar.json
 docs/content/drafts/<campaign-slug>-drafts.md
 docs/content/drafts/<campaign-slug>-drafts.json
-docs/hermes-marketing-state.json
 ```
 
 The state file records strategy, campaign, content calendar, and draft history
@@ -160,12 +158,75 @@ docs/seo/blog-briefs.md
 docs/seo/blog-briefs.json
 ```
 
-## Phase 4 Preview
+## What Phase 4 Adds
 
-The next phase should add lead detection and CRM handoff:
+Phase 4 adds lead detection and CRM handoff:
 
 - lead signal definitions
 - lead scorecards
 - outreach drafts
 - CRM-ready JSON/CSV export
 - follow-up schedule
+
+Define lead signals:
+
+```bash
+scripts/marketing_agency.py define-lead-signals \
+  --project-dir generated-marketing/acme-lidar \
+  --channels "LinkedIn,Reddit,Industry forums" \
+  --signals "looking for volume measurement,asking for truck scale alternatives"
+```
+
+Score a lead:
+
+```bash
+scripts/marketing_agency.py score-lead \
+  --project-dir generated-marketing/acme-lidar \
+  --name "Jordan" \
+  --company "North Ridge Aggregates" \
+  --role "Operations Manager" \
+  --source "LinkedIn" \
+  --channel "LinkedIn" \
+  --text "We are looking for truck volume measurement to reduce loading losses at our aggregate sites."
+```
+
+Draft outreach for review:
+
+```bash
+scripts/marketing_agency.py draft-outreach \
+  --project-dir generated-marketing/acme-lidar \
+  --channel email
+```
+
+Export CRM-ready rows:
+
+```bash
+scripts/marketing_agency.py crm-export \
+  --project-dir generated-marketing/acme-lidar \
+  --format csv \
+  --owner sales
+```
+
+Phase 4 writes:
+
+```text
+docs/leads/lead-signals.md
+docs/leads/lead-signals.json
+docs/leads/lead-scorecards.md
+docs/leads/lead-scorecards.json
+docs/leads/outreach-drafts.md
+docs/leads/outreach-drafts.json
+docs/leads/crm-export.json
+docs/leads/crm-export.csv
+docs/hermes-marketing-state.json
+```
+
+## Phase 5 Preview
+
+The next phase should add analytics and review dashboards:
+
+- campaign performance snapshots
+- content engagement analysis
+- lead funnel metrics
+- weekly optimization recommendations
+- manager review dashboard for all generated artifacts

@@ -2,15 +2,19 @@
 """Deterministic helpers for Hermes marketing and SEO agency workflows.
 
 Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
-and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. It avoids
-network access and does not publish, message, email, or modify external systems.
+and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. Phase 4
+adds lead signal definitions, lead scoring, outreach drafts, and CRM export. It
+avoids network access and does not publish, message, email, update CRM records,
+or modify external systems.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import StringIO
 import json
 import re
 from pathlib import Path
@@ -20,6 +24,7 @@ from typing import Any
 STATE_PATH = Path("docs") / "hermes-marketing-state.json"
 CONTENT_DIR = Path("docs") / "content"
 SEO_DIR = Path("docs") / "seo"
+LEADS_DIR = Path("docs") / "leads"
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,10 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("contentDrafts", [])
     data.setdefault("seoPlans", [])
     data.setdefault("blogBriefs", [])
+    data.setdefault("leadSignals", [])
+    data.setdefault("leadScorecards", [])
+    data.setdefault("outreachDrafts", [])
+    data.setdefault("crmExports", [])
     return data
 
 
@@ -85,6 +94,10 @@ def default_state() -> dict[str, Any]:
         "contentDrafts": [],
         "seoPlans": [],
         "blogBriefs": [],
+        "leadSignals": [],
+        "leadScorecards": [],
+        "outreachDrafts": [],
+        "crmExports": [],
     }
 
 
@@ -305,6 +318,145 @@ def generate_blog_briefs(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def define_lead_signals(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    lead_signals = build_lead_signals(
+        strategy,
+        channels=parse_list(args.channels),
+        signals=parse_list(args.signals),
+        negative_signals=parse_list(args.negative_signals),
+    )
+    signals_path = project_dir / LEADS_DIR / "lead-signals.md"
+    signals_json_path = project_dir / LEADS_DIR / "lead-signals.json"
+    write_text(signals_path, render_lead_signals_markdown(lead_signals))
+    write_text(signals_json_path, json.dumps(lead_signals, indent=2))
+    record_lead_signals(project_dir, lead_signals)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "leadSignals": lead_signals,
+        "leadSignalsPath": str(signals_path),
+        "leadSignalsJsonPath": str(signals_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Score inbound or monitored lead text with score-lead.",
+    }
+
+
+def score_lead(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    lead_signals = state.get("lastLeadSignals", {}) if isinstance(state.get("lastLeadSignals"), dict) else {}
+    if not lead_signals:
+        lead_signals = build_lead_signals(strategy, channels=[], signals=[], negative_signals=[])
+    scorecard = build_lead_scorecard(
+        name=args.name,
+        company=args.company,
+        source=args.source,
+        text=args.text,
+        url=args.url,
+        role=args.role,
+        channel=args.channel,
+        strategy=strategy,
+        lead_signals=lead_signals,
+    )
+    scorecards = [item for item in state.get("leadScorecards", []) if isinstance(item, dict)]
+    scorecards.append(scorecard)
+    scorecards_path = project_dir / LEADS_DIR / "lead-scorecards.md"
+    scorecards_json_path = project_dir / LEADS_DIR / "lead-scorecards.json"
+    write_text(scorecards_path, render_scorecards_markdown(scorecards))
+    write_text(scorecards_json_path, json.dumps(scorecards, indent=2))
+    record_lead_scorecard(project_dir, scorecard)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "scorecard": scorecard,
+        "scorecardsPath": str(scorecards_path),
+        "scorecardsJsonPath": str(scorecards_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Create review-only outreach with draft-outreach, or export CRM rows with crm-export.",
+    }
+
+
+def draft_outreach(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    campaign = state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}
+    scorecard = select_lead_scorecard(state, args.lead_id)
+    if not scorecard:
+        return {"ok": False, "error": "No lead scorecard found. Run score-lead first."}
+    draft = build_outreach_draft(
+        scorecard=scorecard,
+        strategy=strategy,
+        campaign=campaign,
+        channel=args.channel,
+        tone=args.tone,
+        cta=args.cta,
+    )
+    drafts = [item for item in state.get("outreachDrafts", []) if isinstance(item, dict)]
+    drafts.append(draft)
+    drafts_path = project_dir / LEADS_DIR / "outreach-drafts.md"
+    drafts_json_path = project_dir / LEADS_DIR / "outreach-drafts.json"
+    write_text(drafts_path, render_outreach_markdown(drafts))
+    write_text(drafts_json_path, json.dumps(drafts, indent=2))
+    record_outreach_draft(project_dir, draft)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "outreachDraft": draft,
+        "outreachDraftsPath": str(drafts_path),
+        "outreachDraftsJsonPath": str(drafts_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Outreach draft created for review. Sending requires explicit approval.",
+    }
+
+
+def crm_export(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    rows = crm_rows_from_state(state, owner=args.owner)
+    if not rows:
+        return {"ok": False, "error": "No lead scorecards found. Run score-lead first."}
+    export = {
+        "type": "crm-export",
+        "format": args.format,
+        "owner": args.owner,
+        "leadCount": len(rows),
+        "rows": rows,
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+    export_path = project_dir / LEADS_DIR / f"crm-export.{args.format}"
+    if args.format == "csv":
+        write_text(export_path, crm_rows_to_csv(rows))
+    else:
+        write_text(export_path, json.dumps(export, indent=2))
+    record_crm_export(project_dir, {**export, "path": str(export_path)})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "crmExport": export,
+        "crmExportPath": str(export_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "CRM export prepared as a review artifact. Importing or writing CRM records requires approval.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -313,6 +465,16 @@ def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]
         return {}
     campaign = state.get("lastCampaign", {})
     return campaign if isinstance(campaign, dict) else {}
+
+
+def select_lead_scorecard(state: dict[str, Any], lead_id: str) -> dict[str, Any]:
+    if lead_id:
+        for scorecard in state.get("leadScorecards", []):
+            if isinstance(scorecard, dict) and scorecard.get("id") == lead_id:
+                return scorecard
+        return {}
+    scorecard = state.get("lastLeadScorecard", {})
+    return scorecard if isinstance(scorecard, dict) else {}
 
 
 def build_content_plan(
@@ -499,6 +661,332 @@ def build_blog_briefs(strategy: dict[str, Any], seo_plan: dict[str, Any], *, cou
     }
 
 
+def build_lead_signals(
+    strategy: dict[str, Any],
+    *,
+    channels: list[str],
+    signals: list[str],
+    negative_signals: list[str],
+) -> dict[str, Any]:
+    inferred = infer_lead_signals(strategy)
+    positive = unique_list([*signals, *inferred["positiveSignals"]])
+    negatives = unique_list([*negative_signals, *inferred["negativeSignals"]])
+    active_channels = channels or [str(channel) for channel in strategy.get("channels", []) if str(channel).strip()]
+    if not active_channels:
+        active_channels = ["LinkedIn", "X", "Reddit", "Industry forums", "Website form", "Email"]
+    return {
+        "type": "lead-signals",
+        "brand": strategy.get("brand", ""),
+        "audience": strategy.get("audience", ""),
+        "offer": strategy.get("offer", ""),
+        "channels": active_channels,
+        "positiveSignals": positive,
+        "buyingTriggerPhrases": inferred["buyingTriggerPhrases"],
+        "painPointPhrases": inferred["painPointPhrases"],
+        "negativeSignals": negatives,
+        "scoringRules": [
+            "+16 for each explicit positive signal",
+            "+12 for each buying trigger phrase",
+            "+10 for each pain point phrase",
+            "+8 for ICP, industry, role, or channel fit",
+            "-18 for each negative signal",
+            "Hot >= 75, warm >= 45, nurture below 45",
+        ],
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def infer_lead_signals(strategy: dict[str, Any]) -> dict[str, list[str]]:
+    icp = strategy.get("icp", {}) if isinstance(strategy.get("icp"), dict) else {}
+    pain_points = [str(item) for item in icp.get("painPoints", []) if str(item).strip()]
+    buying_triggers = [str(item) for item in icp.get("buyingTriggers", []) if str(item).strip()]
+    offer = str(strategy.get("offer") or "solution")
+    goal = str(strategy.get("goal") or "improve results")
+    audience = str(strategy.get("audience") or "target customer")
+    positive = [
+        f"looking for {offer}",
+        f"need {offer}",
+        f"evaluating {offer}",
+        f"requesting demo for {offer}",
+        f"want to {goal}",
+        f"{audience} asking for vendor recommendations",
+    ]
+    trigger_phrases = [
+        "looking for",
+        "need a solution",
+        "need help",
+        "evaluating vendors",
+        "request for proposal",
+        "budget approved",
+        "book a demo",
+        "reduce losses",
+        "improve accuracy",
+        "replace manual",
+    ]
+    pain_phrases = []
+    for pain in pain_points:
+        pain_phrases.extend([pain, pain.replace("manual ", ""), pain.replace("limited ", "")])
+    for trigger in buying_triggers:
+        trigger_phrases.append(trigger)
+    return {
+        "positiveSignals": positive,
+        "buyingTriggerPhrases": unique_list(trigger_phrases),
+        "painPointPhrases": unique_list(pain_phrases),
+        "negativeSignals": [
+            "student research",
+            "job application",
+            "free only",
+            "not buying",
+            "already solved",
+            "competitor hiring",
+        ],
+    }
+
+
+def build_lead_scorecard(
+    *,
+    name: str,
+    company: str,
+    source: str,
+    text: str,
+    url: str,
+    role: str,
+    channel: str,
+    strategy: dict[str, Any],
+    lead_signals: dict[str, Any],
+) -> dict[str, Any]:
+    scored = score_lead_text(text, lead_signals, strategy, role=role, channel=channel, company=company)
+    lead_id = slugify(f"{company or name}-{source or channel}-{datetime.now(timezone.utc).isoformat()}", fallback="lead")
+    grade = lead_grade(scored["score"])
+    return {
+        "type": "lead-scorecard",
+        "id": lead_id,
+        "name": name.strip(),
+        "company": company.strip(),
+        "role": role.strip(),
+        "source": source.strip(),
+        "channel": channel.strip(),
+        "url": url.strip(),
+        "text": text.strip(),
+        "score": scored["score"],
+        "grade": grade,
+        "matchedSignals": scored["matchedSignals"],
+        "negativeMatches": scored["negativeMatches"],
+        "rationale": scored["rationale"],
+        "suggestedAction": lead_action(grade),
+        "approvalStatus": "review",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def score_lead_text(
+    text: str,
+    lead_signals: dict[str, Any],
+    strategy: dict[str, Any],
+    *,
+    role: str,
+    channel: str,
+    company: str,
+) -> dict[str, Any]:
+    haystack = f"{text} {role} {channel} {company}".lower()
+    matched: list[str] = []
+    negative_matches: list[str] = []
+    score = 10
+    for signal in lead_signals.get("positiveSignals", []):
+        if phrase_matches(haystack, str(signal)):
+            matched.append(str(signal))
+            score += 16
+    for signal in lead_signals.get("buyingTriggerPhrases", []):
+        if phrase_matches(haystack, str(signal)):
+            matched.append(str(signal))
+            score += 12
+    for signal in lead_signals.get("painPointPhrases", []):
+        if phrase_matches(haystack, str(signal)):
+            matched.append(str(signal))
+            score += 10
+    for signal in lead_signals.get("negativeSignals", []):
+        if phrase_matches(haystack, str(signal)):
+            negative_matches.append(str(signal))
+            score -= 18
+    score += fit_score(haystack, strategy, lead_signals)
+    score = max(0, min(100, score))
+    rationale = "Matched " + ", ".join(unique_list(matched)[:5]) if matched else "No strong explicit buying signals found."
+    if negative_matches:
+        rationale += " Negative signals: " + ", ".join(unique_list(negative_matches)[:3]) + "."
+    return {"score": score, "matchedSignals": unique_list(matched), "negativeMatches": unique_list(negative_matches), "rationale": rationale}
+
+
+def phrase_matches(haystack: str, phrase: str) -> bool:
+    needle = phrase.lower().strip()
+    if not needle:
+        return False
+    if needle in haystack:
+        return True
+    words = [word for word in re.split(r"[^a-z0-9]+", needle) if len(word) > 3]
+    return bool(words) and sum(1 for word in words if word in haystack) >= min(2, len(words))
+
+
+def fit_score(haystack: str, strategy: dict[str, Any], lead_signals: dict[str, Any]) -> int:
+    score = 0
+    icp = strategy.get("icp", {}) if isinstance(strategy.get("icp"), dict) else {}
+    industries = [str(item) for item in icp.get("industries", []) if str(item).strip()]
+    channels = [str(item) for item in lead_signals.get("channels", []) if str(item).strip()]
+    for item in industries[:8]:
+        if phrase_matches(haystack, item):
+            score += 8
+            break
+    if any(role in haystack for role in ("owner", "founder", "director", "manager", "vp", "head", "operations", "procurement")):
+        score += 8
+    for item in channels:
+        if item.lower() in haystack:
+            score += 6
+            break
+    return score
+
+
+def lead_grade(score: int) -> str:
+    if score >= 75:
+        return "hot"
+    if score >= 45:
+        return "warm"
+    return "nurture"
+
+
+def lead_action(grade: str) -> str:
+    if grade == "hot":
+        return "Review quickly, personalize outreach, and ask for a demo or discovery call."
+    if grade == "warm":
+        return "Add to nurture, share a relevant proof asset, and follow up within three business days."
+    return "Keep for content retargeting or low-touch nurture until a stronger buying signal appears."
+
+
+def build_outreach_draft(
+    *,
+    scorecard: dict[str, Any],
+    strategy: dict[str, Any],
+    campaign: dict[str, Any],
+    channel: str,
+    tone: str,
+    cta: str,
+) -> dict[str, Any]:
+    brand = str(strategy.get("brand") or "our team")
+    offer = str(campaign.get("offer") or strategy.get("offer") or "the solution")
+    final_cta = cta or str(campaign.get("cta") or "Book a short consultation")
+    final_tone = tone or str(strategy.get("tone") or "professional")
+    matched = scorecard.get("matchedSignals", []) if isinstance(scorecard.get("matchedSignals"), list) else []
+    reason = str(matched[0]) if matched else str(scorecard.get("rationale") or "your current priority")
+    lead_name = str(scorecard.get("name") or "there")
+    company = str(scorecard.get("company") or "your team")
+    subject = f"Quick idea for {company}" if channel == "email" else f"{brand} follow-up"
+    body = outreach_body(channel, lead_name, company, brand, offer, reason, final_cta)
+    draft_id = slugify(f"outreach-{scorecard.get('id', '')}-{channel}", fallback="outreach")
+    return {
+        "type": "outreach-draft",
+        "id": draft_id,
+        "leadId": scorecard.get("id", ""),
+        "channel": channel,
+        "tone": final_tone,
+        "subject": subject,
+        "body": body,
+        "followUpSchedule": build_follow_up_schedule(str(scorecard.get("grade") or "nurture")),
+        "approvalStatus": "draft",
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def outreach_body(channel: str, lead_name: str, company: str, brand: str, offer: str, reason: str, cta: str) -> str:
+    greeting = f"Hi {lead_name}," if lead_name else "Hi,"
+    if channel == "linkedin":
+        return (
+            f"{greeting}\n\nI noticed your team may be focused on {reason}. "
+            f"{brand} helps teams evaluate {offer} with a practical before/after workflow.\n\n"
+            f"If useful, I can share a short example for {company}.\n\n{cta}"
+        )
+    if channel == "x":
+        return f"{greeting} saw the note about {reason}. {brand} works on {offer}; happy to share a quick example if useful. {cta}"
+    if channel == "phone":
+        return (
+            f"Call note: Ask {lead_name} whether {reason} is an active project at {company}. "
+            f"Position {brand} around {offer}. Close with: {cta}."
+        )
+    if channel == "crm-note":
+        return f"Lead mentioned {reason}. Recommended next step: send {brand} proof asset for {offer}, then ask: {cta}."
+    return (
+        f"{greeting}\n\nI saw a signal that {company} may be working on {reason}.\n\n"
+        f"{brand} helps teams evaluate {offer} by connecting the problem to a measurable workflow change.\n\n"
+        "A useful next step could be a short review of the current process and where the gaps show up.\n\n"
+        f"{cta}"
+    )
+
+
+def build_follow_up_schedule(grade: str) -> list[dict[str, Any]]:
+    if grade == "hot":
+        offsets = [0, 2, 5]
+    elif grade == "warm":
+        offsets = [1, 4, 10]
+    else:
+        offsets = [3, 14, 30]
+    return [
+        {"dayOffset": offsets[0], "action": "Send reviewed first-touch outreach."},
+        {"dayOffset": offsets[1], "action": "Follow up with proof asset or relevant content."},
+        {"dayOffset": offsets[2], "action": "Ask whether timing, owner, or priority changed."},
+    ]
+
+
+def crm_rows_from_state(state: dict[str, Any], *, owner: str) -> list[dict[str, Any]]:
+    latest_drafts: dict[str, dict[str, Any]] = {}
+    for draft in state.get("outreachDrafts", []):
+        if isinstance(draft, dict):
+            latest_drafts[str(draft.get("leadId") or "")] = draft
+    rows = []
+    for scorecard in state.get("leadScorecards", []):
+        if not isinstance(scorecard, dict):
+            continue
+        draft = latest_drafts.get(str(scorecard.get("id") or ""), {})
+        rows.append(
+            {
+                "lead_id": scorecard.get("id", ""),
+                "name": scorecard.get("name", ""),
+                "company": scorecard.get("company", ""),
+                "role": scorecard.get("role", ""),
+                "source": scorecard.get("source", ""),
+                "channel": scorecard.get("channel", ""),
+                "url": scorecard.get("url", ""),
+                "score": scorecard.get("score", 0),
+                "grade": scorecard.get("grade", ""),
+                "suggested_action": scorecard.get("suggestedAction", ""),
+                "outreach_channel": draft.get("channel", ""),
+                "outreach_subject": draft.get("subject", ""),
+                "owner": owner,
+                "approval_status": "review",
+            }
+        )
+    return rows
+
+
+def crm_rows_to_csv(rows: list[dict[str, Any]]) -> str:
+    output = StringIO()
+    fieldnames = list(rows[0].keys())
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue().rstrip()
+
+
+def unique_list(items: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for item in items:
+        value = str(item).strip()
+        key = value.lower()
+        if value and key not in seen:
+            seen.add(key)
+            unique.append(value)
+    return unique
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -565,8 +1053,20 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     blog_briefs = state.get("lastBlogBriefs", {}) if isinstance(state.get("lastBlogBriefs"), dict) else {}
     if blog_briefs.get("briefs"):
         lines.append(f"Blog briefs: `{len(blog_briefs['briefs'])}` ready for review")
+    lead_signals = state.get("lastLeadSignals", {}) if isinstance(state.get("lastLeadSignals"), dict) else {}
+    if lead_signals.get("positiveSignals"):
+        lines.append(f"Lead signals: `{len(lead_signals['positiveSignals'])}` positive signals")
+    scorecard = state.get("lastLeadScorecard", {}) if isinstance(state.get("lastLeadScorecard"), dict) else {}
+    if scorecard.get("id"):
+        lines.append(f"Latest lead: `{scorecard.get('grade')}` score `{scorecard.get('score')}` for `{scorecard.get('company') or scorecard.get('name')}`")
+    outreach = state.get("lastOutreachDraft", {}) if isinstance(state.get("lastOutreachDraft"), dict) else {}
+    if outreach.get("id"):
+        lines.append(f"Outreach drafts: `{len(state.get('outreachDrafts', []))}` ready for review")
+    crm = state.get("lastCrmExport", {}) if isinstance(state.get("lastCrmExport"), dict) else {}
+    if crm.get("path"):
+        lines.append(f"CRM export: `{crm['path']}`")
     lines.append("")
-    lines.append("Next: create a campaign, generate content plan, or prepare SEO/GEO tasks.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, or score leads.")
     return "\n".join(lines)
 
 
@@ -616,6 +1116,38 @@ def record_blog_briefs(project_dir: Path, briefs: dict[str, Any]) -> None:
     state.setdefault("blogBriefs", []).append(briefs)
     state["lastBlogBriefs"] = briefs
     state["workflowState"] = "blog_briefs_ready"
+    write_state(project_dir, state)
+
+
+def record_lead_signals(project_dir: Path, lead_signals: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("leadSignals", []).append(lead_signals)
+    state["lastLeadSignals"] = lead_signals
+    state["workflowState"] = "lead_signals_ready"
+    write_state(project_dir, state)
+
+
+def record_lead_scorecard(project_dir: Path, scorecard: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("leadScorecards", []).append(scorecard)
+    state["lastLeadScorecard"] = scorecard
+    state["workflowState"] = "lead_scored"
+    write_state(project_dir, state)
+
+
+def record_outreach_draft(project_dir: Path, draft: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("outreachDrafts", []).append(draft)
+    state["lastOutreachDraft"] = draft
+    state["workflowState"] = "outreach_draft_ready"
+    write_state(project_dir, state)
+
+
+def record_crm_export(project_dir: Path, export: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("crmExports", []).append(export)
+    state["lastCrmExport"] = export
+    state["workflowState"] = "crm_export_ready"
     write_state(project_dir, state)
 
 
@@ -1179,6 +1711,89 @@ def render_blog_briefs_markdown(briefs: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_lead_signals_markdown(lead_signals: dict[str, Any]) -> str:
+    lines = [
+        f"# Lead Signals: {lead_signals.get('brand', 'Marketing Project')}",
+        "",
+        f"- Audience: {lead_signals.get('audience', '')}",
+        f"- Offer: {lead_signals.get('offer', '')}",
+        "- Approval: required before outreach or CRM writes",
+        "",
+        "## Channels to Monitor",
+        *[f"- {channel}" for channel in lead_signals.get("channels", [])],
+        "",
+        "## Positive Signals",
+        *[f"- {signal}" for signal in lead_signals.get("positiveSignals", [])],
+        "",
+        "## Buying Trigger Phrases",
+        *[f"- {signal}" for signal in lead_signals.get("buyingTriggerPhrases", [])],
+        "",
+        "## Pain Point Phrases",
+        *[f"- {signal}" for signal in lead_signals.get("painPointPhrases", [])],
+        "",
+        "## Negative Signals",
+        *[f"- {signal}" for signal in lead_signals.get("negativeSignals", [])],
+        "",
+        "## Scoring Rules",
+        *[f"- {rule}" for rule in lead_signals.get("scoringRules", [])],
+    ]
+    return "\n".join(lines)
+
+
+def render_scorecards_markdown(scorecards: list[dict[str, Any]]) -> str:
+    lines = ["# Lead Scorecards", "", "- Status: review before outreach or CRM import", ""]
+    for scorecard in scorecards:
+        lines.extend(
+            [
+                f"## {scorecard.get('company') or scorecard.get('name') or scorecard.get('id')}",
+                "",
+                f"- Lead ID: {scorecard.get('id', '')}",
+                f"- Name: {scorecard.get('name', '')}",
+                f"- Role: {scorecard.get('role', '')}",
+                f"- Source: {scorecard.get('source', '')}",
+                f"- Channel: {scorecard.get('channel', '')}",
+                f"- URL: {scorecard.get('url', '')}",
+                f"- Score: {scorecard.get('score', 0)}",
+                f"- Grade: {scorecard.get('grade', '')}",
+                f"- Suggested action: {scorecard.get('suggestedAction', '')}",
+                "",
+                "### Matched Signals",
+                *[f"- {signal}" for signal in scorecard.get("matchedSignals", [])],
+                "",
+                "### Rationale",
+                str(scorecard.get("rationale", "")),
+                "",
+                "### Lead Text",
+                str(scorecard.get("text", "")),
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_outreach_markdown(drafts: list[dict[str, Any]]) -> str:
+    lines = ["# Outreach Drafts", "", "- Status: draft only", "- Approval: required before sending", ""]
+    for draft in drafts:
+        lines.extend(
+            [
+                f"## {draft.get('channel', '')}: {draft.get('leadId', '')}",
+                "",
+                f"- Draft ID: {draft.get('id', '')}",
+                f"- Tone: {draft.get('tone', '')}",
+                f"- Subject: {draft.get('subject', '')}",
+                "",
+                "### Body",
+                str(draft.get("body", "")),
+                "",
+                "### Follow-up Schedule",
+            ]
+        )
+        for step in draft.get("followUpSchedule", []):
+            lines.append(f"- Day {step.get('dayOffset', 0)}: {step.get('action', '')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1241,6 +1856,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search intent override.",
     )
     briefs.set_defaults(func=generate_blog_briefs)
+
+    signals = subparsers.add_parser("define-lead-signals", help="Define reviewable lead detection signals from strategy.")
+    signals.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    signals.add_argument("--signals", default="", help="Comma-separated custom positive lead signals.")
+    signals.add_argument("--channels", default="", help="Comma-separated channels to monitor.")
+    signals.add_argument("--negative-signals", default="", help="Comma-separated disqualifying or low-intent signals.")
+    signals.set_defaults(func=define_lead_signals)
+
+    lead = subparsers.add_parser("score-lead", help="Score one lead text snippet against lead signals.")
+    lead.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    lead.add_argument("--name", required=True, help="Lead name or handle.")
+    lead.add_argument("--company", default="", help="Lead company.")
+    lead.add_argument("--source", default="", help="Where the lead was found.")
+    lead.add_argument("--text", required=True, help="Lead text, post, comment, form message, or note to score.")
+    lead.add_argument("--url", default="", help="Source URL.")
+    lead.add_argument("--role", default="", help="Lead role or title.")
+    lead.add_argument("--channel", default="", help="Source channel.")
+    lead.set_defaults(func=score_lead)
+
+    outreach = subparsers.add_parser("draft-outreach", help="Draft review-only outreach for a scored lead.")
+    outreach.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    outreach.add_argument("--lead-id", default="", help="Lead scorecard ID. Defaults to latest scored lead.")
+    outreach.add_argument("--channel", choices=("email", "linkedin", "x", "phone", "crm-note"), default="email", help="Outreach channel.")
+    outreach.add_argument("--tone", default="", help="Tone override.")
+    outreach.add_argument("--cta", default="", help="CTA override.")
+    outreach.set_defaults(func=draft_outreach)
+
+    crm = subparsers.add_parser("crm-export", help="Export scored leads and outreach metadata for CRM review/import.")
+    crm.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    crm.add_argument("--format", choices=("json", "csv"), default="json", help="Export format.")
+    crm.add_argument("--owner", default="", help="Optional lead owner.")
+    crm.set_defaults(func=crm_export)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

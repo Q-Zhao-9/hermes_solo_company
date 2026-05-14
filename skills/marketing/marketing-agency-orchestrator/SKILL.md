@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -47,6 +47,15 @@ scripts/marketing_agency.py generate-seo-plan --project-dir "<project dir>" --fo
 scripts/marketing_agency.py generate-blog-briefs --project-dir "<project dir>" --count 4
 ```
 
+Phase 4 supports lead detection and CRM handoff artifacts:
+
+```bash
+scripts/marketing_agency.py define-lead-signals --project-dir "<project dir>"
+scripts/marketing_agency.py score-lead --project-dir "<project dir>" --name "<lead>" --company "<company>" --text "<lead text>"
+scripts/marketing_agency.py draft-outreach --project-dir "<project dir>" --channel email
+scripts/marketing_agency.py crm-export --project-dir "<project dir>" --format json
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -55,6 +64,8 @@ scripts/marketing_agency.py generate-blog-briefs --project-dir "<project dir>" -
 - **Content drafts**: use `content-studio` and `generate-posts`.
 - **SEO/GEO**: use `seo-geo-growth`, `generate-seo-plan`, and
   `generate-blog-briefs`.
+- **Lead detection and CRM handoff**: use `lead-detection`,
+  `define-lead-signals`, `score-lead`, `draft-outreach`, and `crm-export`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.
