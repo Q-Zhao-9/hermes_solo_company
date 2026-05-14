@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -56,6 +56,13 @@ scripts/marketing_agency.py draft-outreach --project-dir "<project dir>" --chann
 scripts/marketing_agency.py crm-export --project-dir "<project dir>" --format json
 ```
 
+Phase 5 supports analytics snapshots and manager review dashboards:
+
+```bash
+scripts/marketing_agency.py record-performance --project-dir "<project dir>" --channel LinkedIn --metrics "impressions=1000,engagements=80,clicks=35,leads=4"
+scripts/marketing_agency.py generate-review-dashboard --project-dir "<project dir>" --period "<period>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -66,6 +73,8 @@ scripts/marketing_agency.py crm-export --project-dir "<project dir>" --format js
   `generate-blog-briefs`.
 - **Lead detection and CRM handoff**: use `lead-detection`,
   `define-lead-signals`, `score-lead`, `draft-outreach`, and `crm-export`.
+- **Analytics and review dashboards**: use `marketing-analytics`,
+  `record-performance`, and `generate-review-dashboard`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.

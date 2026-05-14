@@ -479,3 +479,130 @@ def test_draft_outreach_and_crm_export_create_review_ready_assets(tmp_path):
     assert "North Ridge Aggregates" in crm_csv
     assert state["workflowState"] == "crm_export_ready"
     assert state["lastCrmExport"]["leadCount"] == 1
+
+
+def test_record_performance_creates_snapshot_and_summary_tracks_it(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+    )
+
+    result = run_script(
+        "record-performance",
+        "--project-dir",
+        str(project_dir),
+        "--channel",
+        "LinkedIn",
+        "--period",
+        "2026-W20",
+        "--metrics",
+        "impressions=1000,engagements=80,clicks=35,leads=4,conversions=1,spend=120,revenue=600",
+        "--notes",
+        "ROI post outperformed technical post.",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    markdown = Path(result["performanceSnapshotsPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["performanceSnapshot"]["derivedMetrics"]["ctr"] == 0.035
+    assert result["performanceSnapshot"]["derivedMetrics"]["leadRate"] == 0.1143
+    assert "Performance Snapshots" in markdown
+    assert "ROI post outperformed technical post." in markdown
+    assert state["workflowState"] == "performance_snapshot_ready"
+    assert "Latest performance: CTR `3.5%`" in summary["summary"]
+
+
+def test_generate_review_dashboard_aggregates_assets_leads_and_performance(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+        "--cta",
+        "Book a measurement demo",
+    )
+    run_script("generate-posts", "--project-dir", str(project_dir), "--channels", "LinkedIn,Email")
+    run_script("generate-blog-briefs", "--project-dir", str(project_dir), "--count", "2")
+    run_script("define-lead-signals", "--project-dir", str(project_dir))
+    run_script(
+        "score-lead",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Jordan",
+        "--company",
+        "North Ridge Aggregates",
+        "--text",
+        "We are looking for truck volume measurement to reduce loading losses.",
+    )
+    run_script(
+        "record-performance",
+        "--project-dir",
+        str(project_dir),
+        "--channel",
+        "LinkedIn",
+        "--metrics",
+        "impressions=2000,engagements=120,clicks=50,leads=5,conversions=1,spend=200,revenue=1000",
+    )
+
+    result = run_script(
+        "generate-review-dashboard",
+        "--project-dir",
+        str(project_dir),
+        "--focus",
+        "weekly executive review",
+        "--period",
+        "2026-W20",
+    )
+
+    markdown = Path(result["reviewDashboardPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["reviewDashboard"]["artifactCounts"]["contentDrafts"] == 2
+    assert result["reviewDashboard"]["artifactCounts"]["blogBriefs"] == 2
+    assert result["reviewDashboard"]["leadFunnel"]["total"] == 1
+    assert result["reviewDashboard"]["performanceTotals"]["totals"]["clicks"] == 50
+    assert "Manager Review Dashboard: Acme LiDAR" in markdown
+    assert "Optimization Recommendations" in markdown
+    assert state["workflowState"] == "review_dashboard_ready"

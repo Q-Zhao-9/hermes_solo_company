@@ -3,9 +3,10 @@
 
 Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
 and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. Phase 4
-adds lead signal definitions, lead scoring, outreach drafts, and CRM export. It
-avoids network access and does not publish, message, email, update CRM records,
-or modify external systems.
+adds lead signal definitions, lead scoring, outreach drafts, and CRM export.
+Phase 5 adds performance snapshots, optimization recommendations, and manager
+dashboards. It avoids network access and does not publish, message, email,
+update CRM records, or modify external systems.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ STATE_PATH = Path("docs") / "hermes-marketing-state.json"
 CONTENT_DIR = Path("docs") / "content"
 SEO_DIR = Path("docs") / "seo"
 LEADS_DIR = Path("docs") / "leads"
+ANALYTICS_DIR = Path("docs") / "analytics"
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,8 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("leadScorecards", [])
     data.setdefault("outreachDrafts", [])
     data.setdefault("crmExports", [])
+    data.setdefault("performanceSnapshots", [])
+    data.setdefault("reviewDashboards", [])
     return data
 
 
@@ -98,6 +102,8 @@ def default_state() -> dict[str, Any]:
         "leadScorecards": [],
         "outreachDrafts": [],
         "crmExports": [],
+        "performanceSnapshots": [],
+        "reviewDashboards": [],
     }
 
 
@@ -454,6 +460,66 @@ def crm_export(args: argparse.Namespace) -> dict[str, Any]:
         "crmExportPath": str(export_path),
         "statePath": str(project_dir / STATE_PATH),
         "message": "CRM export prepared as a review artifact. Importing or writing CRM records requires approval.",
+    }
+
+
+def record_performance(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    campaign = select_campaign(state, args.campaign)
+    if not campaign:
+        return {"ok": False, "error": "No campaign found. Run create-campaign first."}
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    snapshot = build_performance_snapshot(
+        campaign=campaign,
+        strategy=strategy,
+        channel=args.channel,
+        period=args.period,
+        metrics=parse_metrics(args.metrics),
+        notes=args.notes,
+    )
+    snapshots = [item for item in state.get("performanceSnapshots", []) if isinstance(item, dict)]
+    snapshots.append(snapshot)
+    snapshot_path = project_dir / ANALYTICS_DIR / "performance-snapshots.md"
+    snapshot_json_path = project_dir / ANALYTICS_DIR / "performance-snapshots.json"
+    write_text(snapshot_path, render_performance_snapshots_markdown(snapshots))
+    write_text(snapshot_json_path, json.dumps(snapshots, indent=2))
+    record_performance_snapshot(project_dir, snapshot)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "performanceSnapshot": snapshot,
+        "performanceSnapshotsPath": str(snapshot_path),
+        "performanceSnapshotsJsonPath": str(snapshot_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Generate the manager dashboard with generate-review-dashboard.",
+    }
+
+
+def generate_review_dashboard(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    dashboard = build_review_dashboard(state, focus=args.focus, period=args.period)
+    dashboard_path = project_dir / ANALYTICS_DIR / "manager-review-dashboard.md"
+    dashboard_json_path = project_dir / ANALYTICS_DIR / "manager-review-dashboard.json"
+    write_text(dashboard_path, render_review_dashboard_markdown(dashboard))
+    write_text(dashboard_json_path, json.dumps(dashboard, indent=2))
+    record_review_dashboard(project_dir, dashboard)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "reviewDashboard": dashboard,
+        "reviewDashboardPath": str(dashboard_path),
+        "reviewDashboardJsonPath": str(dashboard_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Manager review dashboard generated from local project state.",
     }
 
 
@@ -987,6 +1053,210 @@ def unique_list(items: list[str]) -> list[str]:
     return unique
 
 
+def parse_metrics(value: str) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for item in parse_list(value):
+        if "=" not in item:
+            continue
+        key, raw_value = item.split("=", 1)
+        key = slugify(key.strip(), fallback="metric").replace("-", "_")
+        try:
+            metrics[key] = float(raw_value.strip())
+        except ValueError:
+            continue
+    return metrics
+
+
+def build_performance_snapshot(
+    *,
+    campaign: dict[str, Any],
+    strategy: dict[str, Any],
+    channel: str,
+    period: str,
+    metrics: dict[str, float],
+    notes: str,
+) -> dict[str, Any]:
+    normalized = normalize_metrics(metrics)
+    derived = derive_performance_metrics(normalized)
+    recommendations = performance_recommendations(campaign, strategy, channel, normalized, derived)
+    return {
+        "type": "performance-snapshot",
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "channel": channel or "all channels",
+        "period": period or "latest period",
+        "metrics": normalized,
+        "derivedMetrics": derived,
+        "notes": notes.strip(),
+        "recommendations": recommendations,
+        "approvalRequired": False,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def normalize_metrics(metrics: dict[str, float]) -> dict[str, float]:
+    defaults = {
+        "impressions": 0.0,
+        "engagements": 0.0,
+        "clicks": 0.0,
+        "leads": 0.0,
+        "conversions": 0.0,
+        "spend": 0.0,
+        "revenue": 0.0,
+    }
+    defaults.update(metrics)
+    return defaults
+
+
+def derive_performance_metrics(metrics: dict[str, float]) -> dict[str, float]:
+    impressions = metrics.get("impressions", 0.0)
+    clicks = metrics.get("clicks", 0.0)
+    engagements = metrics.get("engagements", 0.0)
+    leads = metrics.get("leads", 0.0)
+    conversions = metrics.get("conversions", 0.0)
+    spend = metrics.get("spend", 0.0)
+    revenue = metrics.get("revenue", 0.0)
+    return {
+        "engagementRate": safe_ratio(engagements, impressions),
+        "ctr": safe_ratio(clicks, impressions),
+        "leadRate": safe_ratio(leads, clicks),
+        "conversionRate": safe_ratio(conversions, leads),
+        "costPerLead": safe_ratio(spend, leads),
+        "roas": safe_ratio(revenue, spend),
+    }
+
+
+def safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 4)
+
+
+def performance_recommendations(
+    campaign: dict[str, Any],
+    strategy: dict[str, Any],
+    channel: str,
+    metrics: dict[str, float],
+    derived: dict[str, float],
+) -> list[str]:
+    recommendations = []
+    if derived["ctr"] < 0.01 and metrics["impressions"] > 0:
+        recommendations.append("Improve the hook and CTA because click-through rate is below 1%.")
+    if derived["engagementRate"] < 0.03 and metrics["impressions"] > 0:
+        recommendations.append("Test a stronger problem-led angle or proof asset to increase engagement.")
+    if metrics["leads"] == 0 and metrics["clicks"] > 0:
+        recommendations.append("Review landing page/message match because clicks are not converting into leads.")
+    if metrics["leads"] > 0 and derived["conversionRate"] < 0.2:
+        recommendations.append("Add follow-up proof and clearer qualification steps for generated leads.")
+    if metrics["spend"] > 0 and derived["roas"] < 1:
+        recommendations.append("Pause scaling until offer, audience, or conversion path improves.")
+    if not recommendations:
+        recommendations.append("Keep the campaign running, preserve the current winning angle, and test one controlled variation.")
+    offer = campaign.get("offer") or strategy.get("offer") or "the offer"
+    recommendations.append(f"Next test: compare ROI-focused messaging against technical proof for {offer} on {channel or 'the active channel'}.")
+    return recommendations
+
+
+def build_review_dashboard(state: dict[str, Any], *, focus: str, period: str) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    snapshots = [item for item in state.get("performanceSnapshots", []) if isinstance(item, dict)]
+    lead_scorecards = [item for item in state.get("leadScorecards", []) if isinstance(item, dict)]
+    content_drafts = state.get("lastContentDrafts", {}) if isinstance(state.get("lastContentDrafts"), dict) else {}
+    blog_briefs = state.get("lastBlogBriefs", {}) if isinstance(state.get("lastBlogBriefs"), dict) else {}
+    totals = aggregate_performance(snapshots)
+    lead_funnel = aggregate_lead_funnel(lead_scorecards)
+    review_queue = build_review_queue(state)
+    recommendations = dashboard_recommendations(totals, lead_funnel, review_queue)
+    return {
+        "type": "manager-review-dashboard",
+        "brand": strategy.get("brand", ""),
+        "focus": focus or "marketing review",
+        "period": period or "latest period",
+        "artifactCounts": {
+            "strategies": len(state.get("strategies", [])),
+            "campaigns": len(state.get("campaigns", [])),
+            "contentDrafts": len(content_drafts.get("drafts", [])) if isinstance(content_drafts.get("drafts"), list) else 0,
+            "blogBriefs": len(blog_briefs.get("briefs", [])) if isinstance(blog_briefs.get("briefs"), list) else 0,
+            "leadScorecards": len(lead_scorecards),
+            "outreachDrafts": len(state.get("outreachDrafts", [])),
+            "performanceSnapshots": len(snapshots),
+        },
+        "performanceTotals": totals,
+        "leadFunnel": lead_funnel,
+        "reviewQueue": review_queue,
+        "optimizationRecommendations": recommendations,
+        "approvalRequired": False,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def aggregate_performance(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    totals = normalize_metrics({})
+    by_channel: dict[str, dict[str, float]] = {}
+    for snapshot in snapshots:
+        metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+        channel = str(snapshot.get("channel") or "all channels")
+        channel_totals = by_channel.setdefault(channel, normalize_metrics({}))
+        for key in totals:
+            value = float(metrics.get(key, 0.0) or 0.0)
+            totals[key] += value
+            channel_totals[key] += value
+    return {
+        "totals": totals,
+        "derivedMetrics": derive_performance_metrics(totals),
+        "byChannel": {channel: {**metrics, "derivedMetrics": derive_performance_metrics(metrics)} for channel, metrics in by_channel.items()},
+    }
+
+
+def aggregate_lead_funnel(scorecards: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {"hot": 0, "warm": 0, "nurture": 0}
+    for scorecard in scorecards:
+        grade = str(scorecard.get("grade") or "nurture")
+        counts[grade if grade in counts else "nurture"] += 1
+    total = sum(counts.values())
+    return {
+        "total": total,
+        "hot": counts["hot"],
+        "warm": counts["warm"],
+        "nurture": counts["nurture"],
+        "salesReady": counts["hot"] + counts["warm"],
+        "salesReadyRate": safe_ratio(counts["hot"] + counts["warm"], total),
+    }
+
+
+def build_review_queue(state: dict[str, Any]) -> list[dict[str, Any]]:
+    queue = []
+    drafts = state.get("lastContentDrafts", {}) if isinstance(state.get("lastContentDrafts"), dict) else {}
+    if isinstance(drafts.get("drafts"), list) and drafts["drafts"]:
+        queue.append({"artifact": "content drafts", "count": len(drafts["drafts"]), "action": "Review and approve posts before publishing."})
+    briefs = state.get("lastBlogBriefs", {}) if isinstance(state.get("lastBlogBriefs"), dict) else {}
+    if isinstance(briefs.get("briefs"), list) and briefs["briefs"]:
+        queue.append({"artifact": "blog briefs", "count": len(briefs["briefs"]), "action": "Review outlines before assigning writing or publishing."})
+    scorecards = [item for item in state.get("leadScorecards", []) if isinstance(item, dict)]
+    if scorecards:
+        queue.append({"artifact": "lead scorecards", "count": len(scorecards), "action": "Review hot and warm leads before outreach."})
+    outreach = [item for item in state.get("outreachDrafts", []) if isinstance(item, dict)]
+    if outreach:
+        queue.append({"artifact": "outreach drafts", "count": len(outreach), "action": "Approve or edit drafts before sending."})
+    return queue
+
+
+def dashboard_recommendations(totals: dict[str, Any], lead_funnel: dict[str, Any], review_queue: list[dict[str, Any]]) -> list[str]:
+    derived = totals.get("derivedMetrics", {}) if isinstance(totals.get("derivedMetrics"), dict) else {}
+    recommendations = []
+    if derived.get("ctr", 0) < 0.01 and totals.get("totals", {}).get("impressions", 0) > 0:
+        recommendations.append("Prioritize hook and CTA testing across low-CTR channels.")
+    if lead_funnel.get("hot", 0) > 0:
+        recommendations.append("Review hot leads first and create a short follow-up block for this week.")
+    if lead_funnel.get("total", 0) > 0 and lead_funnel.get("salesReadyRate", 0) < 0.35:
+        recommendations.append("Tighten lead signal definitions because too many leads remain nurture-only.")
+    if len(review_queue) > 2:
+        recommendations.append("Clear the approval queue before creating more campaign assets.")
+    if not recommendations:
+        recommendations.append("Continue weekly reporting and run one controlled content or audience test.")
+    return recommendations
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -1065,8 +1335,15 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     crm = state.get("lastCrmExport", {}) if isinstance(state.get("lastCrmExport"), dict) else {}
     if crm.get("path"):
         lines.append(f"CRM export: `{crm['path']}`")
+    performance = state.get("lastPerformanceSnapshot", {}) if isinstance(state.get("lastPerformanceSnapshot"), dict) else {}
+    if performance.get("derivedMetrics"):
+        derived = performance["derivedMetrics"]
+        lines.append(f"Latest performance: CTR `{percent(derived.get('ctr', 0))}`, lead rate `{percent(derived.get('leadRate', 0))}`")
+    dashboard = state.get("lastReviewDashboard", {}) if isinstance(state.get("lastReviewDashboard"), dict) else {}
+    if dashboard.get("artifactCounts"):
+        lines.append(f"Review dashboard: `{dashboard.get('period', 'latest period')}` with `{len(dashboard.get('reviewQueue', []))}` review queues")
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, or score leads.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, or review analytics.")
     return "\n".join(lines)
 
 
@@ -1148,6 +1425,22 @@ def record_crm_export(project_dir: Path, export: dict[str, Any]) -> None:
     state.setdefault("crmExports", []).append(export)
     state["lastCrmExport"] = export
     state["workflowState"] = "crm_export_ready"
+    write_state(project_dir, state)
+
+
+def record_performance_snapshot(project_dir: Path, snapshot: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("performanceSnapshots", []).append(snapshot)
+    state["lastPerformanceSnapshot"] = snapshot
+    state["workflowState"] = "performance_snapshot_ready"
+    write_state(project_dir, state)
+
+
+def record_review_dashboard(project_dir: Path, dashboard: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("reviewDashboards", []).append(dashboard)
+    state["lastReviewDashboard"] = dashboard
+    state["workflowState"] = "review_dashboard_ready"
     write_state(project_dir, state)
 
 
@@ -1503,6 +1796,13 @@ def parse_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def percent(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "0.0%"
+
+
 def render_strategy_markdown(strategy: dict[str, Any]) -> str:
     icp = strategy["icp"]
     lines = [
@@ -1794,6 +2094,86 @@ def render_outreach_markdown(drafts: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def render_performance_snapshots_markdown(snapshots: list[dict[str, Any]]) -> str:
+    lines = ["# Performance Snapshots", "", "- Source: manually supplied or imported metrics", ""]
+    for snapshot in snapshots:
+        metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+        derived = snapshot.get("derivedMetrics", {}) if isinstance(snapshot.get("derivedMetrics"), dict) else {}
+        lines.extend(
+            [
+                f"## {snapshot.get('campaign', 'Campaign')} - {snapshot.get('channel', 'all channels')}",
+                "",
+                f"- Period: {snapshot.get('period', '')}",
+                f"- Impressions: {metrics.get('impressions', 0):.0f}",
+                f"- Engagements: {metrics.get('engagements', 0):.0f}",
+                f"- Clicks: {metrics.get('clicks', 0):.0f}",
+                f"- Leads: {metrics.get('leads', 0):.0f}",
+                f"- Conversions: {metrics.get('conversions', 0):.0f}",
+                f"- Spend: {metrics.get('spend', 0):.2f}",
+                f"- Revenue: {metrics.get('revenue', 0):.2f}",
+                f"- Engagement rate: {percent(derived.get('engagementRate', 0))}",
+                f"- CTR: {percent(derived.get('ctr', 0))}",
+                f"- Lead rate: {percent(derived.get('leadRate', 0))}",
+                f"- Conversion rate: {percent(derived.get('conversionRate', 0))}",
+                "",
+                "### Recommendations",
+                *[f"- {item}" for item in snapshot.get("recommendations", [])],
+                "",
+            ]
+        )
+        if snapshot.get("notes"):
+            lines.extend(["### Notes", str(snapshot["notes"]), ""])
+    return "\n".join(lines)
+
+
+def render_review_dashboard_markdown(dashboard: dict[str, Any]) -> str:
+    totals = dashboard.get("performanceTotals", {}) if isinstance(dashboard.get("performanceTotals"), dict) else {}
+    total_metrics = totals.get("totals", {}) if isinstance(totals.get("totals"), dict) else {}
+    derived = totals.get("derivedMetrics", {}) if isinstance(totals.get("derivedMetrics"), dict) else {}
+    lead_funnel = dashboard.get("leadFunnel", {}) if isinstance(dashboard.get("leadFunnel"), dict) else {}
+    counts = dashboard.get("artifactCounts", {}) if isinstance(dashboard.get("artifactCounts"), dict) else {}
+    lines = [
+        f"# Manager Review Dashboard: {dashboard.get('brand', 'Marketing Project')}",
+        "",
+        f"- Focus: {dashboard.get('focus', '')}",
+        f"- Period: {dashboard.get('period', '')}",
+        "",
+        "## Artifact Counts",
+    ]
+    for key, value in counts.items():
+        lines.append(f"- {key}: {value}")
+    lines.extend(
+        [
+            "",
+            "## Performance Totals",
+            f"- Impressions: {total_metrics.get('impressions', 0):.0f}",
+            f"- Engagements: {total_metrics.get('engagements', 0):.0f}",
+            f"- Clicks: {total_metrics.get('clicks', 0):.0f}",
+            f"- Leads: {total_metrics.get('leads', 0):.0f}",
+            f"- Conversions: {total_metrics.get('conversions', 0):.0f}",
+            f"- Spend: {total_metrics.get('spend', 0):.2f}",
+            f"- Revenue: {total_metrics.get('revenue', 0):.2f}",
+            f"- CTR: {percent(derived.get('ctr', 0))}",
+            f"- Lead rate: {percent(derived.get('leadRate', 0))}",
+            f"- ROAS: {derived.get('roas', 0):.2f}",
+            "",
+            "## Lead Funnel",
+            f"- Total leads: {lead_funnel.get('total', 0)}",
+            f"- Hot: {lead_funnel.get('hot', 0)}",
+            f"- Warm: {lead_funnel.get('warm', 0)}",
+            f"- Nurture: {lead_funnel.get('nurture', 0)}",
+            f"- Sales-ready rate: {percent(lead_funnel.get('salesReadyRate', 0))}",
+            "",
+            "## Review Queue",
+        ]
+    )
+    for item in dashboard.get("reviewQueue", []):
+        lines.append(f"- {item.get('artifact', '')}: {item.get('count', 0)} - {item.get('action', '')}")
+    lines.extend(["", "## Optimization Recommendations"])
+    lines.extend(f"- {item}" for item in dashboard.get("optimizationRecommendations", []))
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1888,6 +2268,25 @@ def build_parser() -> argparse.ArgumentParser:
     crm.add_argument("--format", choices=("json", "csv"), default="json", help="Export format.")
     crm.add_argument("--owner", default="", help="Optional lead owner.")
     crm.set_defaults(func=crm_export)
+
+    performance = subparsers.add_parser("record-performance", help="Record campaign/channel metrics and generate optimization recommendations.")
+    performance.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    performance.add_argument("--campaign", default="", help="Campaign slug. Defaults to latest campaign.")
+    performance.add_argument("--channel", default="all channels", help="Channel for this metric snapshot.")
+    performance.add_argument("--period", default="latest period", help="Reporting period, such as 2026-W20.")
+    performance.add_argument(
+        "--metrics",
+        default="",
+        help="Comma-separated key=value metrics: impressions,engagements,clicks,leads,conversions,spend,revenue.",
+    )
+    performance.add_argument("--notes", default="", help="Optional performance notes.")
+    performance.set_defaults(func=record_performance)
+
+    dashboard = subparsers.add_parser("generate-review-dashboard", help="Generate a manager review dashboard from marketing project state.")
+    dashboard.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    dashboard.add_argument("--focus", default="weekly marketing review", help="Dashboard focus.")
+    dashboard.add_argument("--period", default="latest period", help="Reporting period.")
+    dashboard.set_defaults(func=generate_review_dashboard)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

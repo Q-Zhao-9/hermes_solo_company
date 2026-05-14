@@ -221,12 +221,57 @@ docs/leads/crm-export.csv
 docs/hermes-marketing-state.json
 ```
 
-## Phase 5 Preview
+## What Phase 5 Adds
 
-The next phase should add analytics and review dashboards:
+Phase 5 adds analytics and review dashboards:
 
 - campaign performance snapshots
 - content engagement analysis
 - lead funnel metrics
 - weekly optimization recommendations
 - manager review dashboard for all generated artifacts
+
+Record performance metrics:
+
+```bash
+scripts/marketing_agency.py record-performance \
+  --project-dir generated-marketing/acme-lidar \
+  --channel LinkedIn \
+  --period "2026-W20" \
+  --metrics "impressions=1000,engagements=80,clicks=35,leads=4,conversions=1,spend=120,revenue=600" \
+  --notes "ROI post outperformed technical post"
+```
+
+Generate a manager dashboard:
+
+```bash
+scripts/marketing_agency.py generate-review-dashboard \
+  --project-dir generated-marketing/acme-lidar \
+  --focus "weekly executive review" \
+  --period "2026-W20"
+```
+
+Phase 5 writes:
+
+```text
+docs/analytics/performance-snapshots.md
+docs/analytics/performance-snapshots.json
+docs/analytics/manager-review-dashboard.md
+docs/analytics/manager-review-dashboard.json
+docs/hermes-marketing-state.json
+```
+
+The dashboard summarizes artifact counts, campaign metrics, lead funnel
+quality, pending review queues, and optimization recommendations. It is a
+review artifact only; changing budgets, publishing content, or editing live
+campaigns still requires explicit approval.
+
+## Phase 6 Preview
+
+The next phase can add competitor intelligence:
+
+- competitor profile memory
+- competitor content/event tracking
+- positioning gap analysis
+- response campaign recommendations
+- market trend watch reports
