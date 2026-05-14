@@ -266,12 +266,72 @@ quality, pending review queues, and optimization recommendations. It is a
 review artifact only; changing budgets, publishing content, or editing live
 campaigns still requires explicit approval.
 
-## Phase 6 Preview
+## What Phase 6 Adds
 
-The next phase can add competitor intelligence:
+Phase 6 adds competitor intelligence:
 
 - competitor profile memory
 - competitor content/event tracking
 - positioning gap analysis
 - response campaign recommendations
 - market trend watch reports
+
+Add a competitor profile:
+
+```bash
+scripts/marketing_agency.py add-competitor \
+  --project-dir generated-marketing/acme-lidar \
+  --name "MeasureMax" \
+  --positioning "Truck measurement dashboards for aggregates" \
+  --strengths "customer proof,YouTube demos" \
+  --weaknesses "limited workflow ROI content" \
+  --channels "LinkedIn,SEO blog,YouTube"
+```
+
+Track a competitor move:
+
+```bash
+scripts/marketing_agency.py track-competitor \
+  --project-dir generated-marketing/acme-lidar \
+  --competitor measuremax \
+  --event-type "case study" \
+  --channel LinkedIn \
+  --summary "Published a new quarry case study emphasizing loading accuracy" \
+  --impact high \
+  --tags "case study,accuracy,aggregates"
+```
+
+Generate a competitor intelligence report:
+
+```bash
+scripts/marketing_agency.py competitor-report \
+  --project-dir generated-marketing/acme-lidar \
+  --focus "weekly competitor watch" \
+  --period "2026-W20"
+```
+
+Phase 6 writes:
+
+```text
+docs/competitors/competitor-profiles.md
+docs/competitors/competitor-profiles.json
+docs/competitors/competitor-observations.md
+docs/competitors/competitor-observations.json
+docs/competitors/competitor-intelligence-report.md
+docs/competitors/competitor-intelligence-report.json
+docs/hermes-marketing-state.json
+```
+
+The report summarizes competitor profiles, recent observations, positioning
+gaps, market trend topics, and response campaign ideas. It does not browse the
+internet or publish response content by itself.
+
+## Phase 7 Preview
+
+The next phase can add campaign execution planning:
+
+- approval packages for publish/send/deploy steps
+- channel-specific execution checklists
+- asset-to-channel publishing queue
+- post-approval change log
+- handoff package for human operators

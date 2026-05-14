@@ -5,8 +5,9 @@ Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
 and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. Phase 4
 adds lead signal definitions, lead scoring, outreach drafts, and CRM export.
 Phase 5 adds performance snapshots, optimization recommendations, and manager
-dashboards. It avoids network access and does not publish, message, email,
-update CRM records, or modify external systems.
+dashboards. Phase 6 adds competitor intelligence and trend watch reports. It
+avoids network access and does not publish, message, email, update CRM records,
+or modify external systems.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ CONTENT_DIR = Path("docs") / "content"
 SEO_DIR = Path("docs") / "seo"
 LEADS_DIR = Path("docs") / "leads"
 ANALYTICS_DIR = Path("docs") / "analytics"
+COMPETITOR_DIR = Path("docs") / "competitors"
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,9 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("crmExports", [])
     data.setdefault("performanceSnapshots", [])
     data.setdefault("reviewDashboards", [])
+    data.setdefault("competitors", [])
+    data.setdefault("competitorObservations", [])
+    data.setdefault("competitorReports", [])
     return data
 
 
@@ -104,6 +109,9 @@ def default_state() -> dict[str, Any]:
         "crmExports": [],
         "performanceSnapshots": [],
         "reviewDashboards": [],
+        "competitors": [],
+        "competitorObservations": [],
+        "competitorReports": [],
     }
 
 
@@ -523,6 +531,104 @@ def generate_review_dashboard(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def add_competitor(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    competitor = build_competitor_profile(
+        strategy=strategy,
+        name=args.name,
+        url=args.url,
+        category=args.category,
+        positioning=args.positioning,
+        strengths=parse_list(args.strengths),
+        weaknesses=parse_list(args.weaknesses),
+        channels=parse_list(args.channels),
+    )
+    competitors = upsert_by_id([item for item in state.get("competitors", []) if isinstance(item, dict)], competitor)
+    profile_path = project_dir / COMPETITOR_DIR / "competitor-profiles.md"
+    profile_json_path = project_dir / COMPETITOR_DIR / "competitor-profiles.json"
+    write_text(profile_path, render_competitor_profiles_markdown(competitors))
+    write_text(profile_json_path, json.dumps(competitors, indent=2))
+    record_competitor(project_dir, competitor)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "competitor": competitor,
+        "competitorProfilesPath": str(profile_path),
+        "competitorProfilesJsonPath": str(profile_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Track competitor moves with track-competitor, then generate a competitor-report.",
+    }
+
+
+def track_competitor(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    competitor = select_competitor(state, args.competitor)
+    if not competitor:
+        return {"ok": False, "error": "No competitor found. Run add-competitor first."}
+    observation = build_competitor_observation(
+        competitor=competitor,
+        event_type=args.event_type,
+        channel=args.channel,
+        summary=args.summary,
+        url=args.url,
+        impact=args.impact,
+        tags=parse_list(args.tags),
+    )
+    observations = [item for item in state.get("competitorObservations", []) if isinstance(item, dict)]
+    observations.append(observation)
+    observations_path = project_dir / COMPETITOR_DIR / "competitor-observations.md"
+    observations_json_path = project_dir / COMPETITOR_DIR / "competitor-observations.json"
+    write_text(observations_path, render_competitor_observations_markdown(observations))
+    write_text(observations_json_path, json.dumps(observations, indent=2))
+    record_competitor_observation(project_dir, observation)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "competitorObservation": observation,
+        "competitorObservationsPath": str(observations_path),
+        "competitorObservationsJsonPath": str(observations_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Generate competitive positioning and response recommendations with competitor-report.",
+    }
+
+
+def competitor_report(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    competitors = [item for item in state.get("competitors", []) if isinstance(item, dict)]
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    if not competitors:
+        return {"ok": False, "error": "No competitors found. Run add-competitor first."}
+    report = build_competitor_report(state, focus=args.focus, period=args.period)
+    report_path = project_dir / COMPETITOR_DIR / "competitor-intelligence-report.md"
+    report_json_path = project_dir / COMPETITOR_DIR / "competitor-intelligence-report.json"
+    write_text(report_path, render_competitor_report_markdown(report))
+    write_text(report_json_path, json.dumps(report, indent=2))
+    record_competitor_report(project_dir, report)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "competitorReport": report,
+        "competitorReportPath": str(report_path),
+        "competitorReportJsonPath": str(report_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Competitor intelligence report generated from local observations.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -541,6 +647,17 @@ def select_lead_scorecard(state: dict[str, Any], lead_id: str) -> dict[str, Any]
         return {}
     scorecard = state.get("lastLeadScorecard", {})
     return scorecard if isinstance(scorecard, dict) else {}
+
+
+def select_competitor(state: dict[str, Any], competitor_id_or_name: str) -> dict[str, Any]:
+    needle = competitor_id_or_name.strip().lower()
+    competitors = [item for item in state.get("competitors", []) if isinstance(item, dict)]
+    if not needle and competitors:
+        return competitors[-1]
+    for competitor in competitors:
+        if str(competitor.get("id", "")).lower() == needle or str(competitor.get("name", "")).lower() == needle:
+            return competitor
+    return {}
 
 
 def build_content_plan(
@@ -1257,6 +1374,203 @@ def dashboard_recommendations(totals: dict[str, Any], lead_funnel: dict[str, Any
     return recommendations
 
 
+def build_competitor_profile(
+    *,
+    strategy: dict[str, Any],
+    name: str,
+    url: str,
+    category: str,
+    positioning: str,
+    strengths: list[str],
+    weaknesses: list[str],
+    channels: list[str],
+) -> dict[str, Any]:
+    competitor_id = slugify(name, fallback="competitor")
+    return {
+        "type": "competitor-profile",
+        "id": competitor_id,
+        "name": name.strip(),
+        "url": url.strip(),
+        "category": category.strip() or "direct competitor",
+        "positioning": positioning.strip(),
+        "strengths": strengths or ["brand awareness", "existing market presence"],
+        "weaknesses": weaknesses or ["unclear differentiation", "limited proof visible from supplied notes"],
+        "channels": channels or [str(channel) for channel in strategy.get("channels", [])[:3]],
+        "watchTopics": build_competitor_watch_topics(strategy, positioning, strengths),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_competitor_watch_topics(strategy: dict[str, Any], positioning: str, strengths: list[str]) -> list[str]:
+    offer = str(strategy.get("offer") or "the category")
+    topics = [
+        f"{offer} pricing or packaging changes",
+        "new case studies or customer proof",
+        "new feature or integration claims",
+        "SEO pages targeting buyer comparison intent",
+        "paid campaign or landing page changes",
+    ]
+    if positioning:
+        topics.append(f"messaging around: {positioning}")
+    topics.extend(str(item) for item in strengths[:3])
+    return unique_list(topics)
+
+
+def build_competitor_observation(
+    *,
+    competitor: dict[str, Any],
+    event_type: str,
+    channel: str,
+    summary: str,
+    url: str,
+    impact: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    observation_id = slugify(f"{competitor.get('id', 'competitor')}-{event_type}-{summary}", fallback="competitor-observation")
+    return {
+        "type": "competitor-observation",
+        "id": observation_id,
+        "competitorId": competitor.get("id", ""),
+        "competitorName": competitor.get("name", ""),
+        "eventType": event_type,
+        "channel": channel,
+        "summary": summary.strip(),
+        "url": url.strip(),
+        "impact": impact,
+        "tags": tags,
+        "responseIdeas": competitor_response_ideas(event_type, summary, impact),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def competitor_response_ideas(event_type: str, summary: str, impact: str) -> list[str]:
+    lowered = f"{event_type} {summary} {impact}".lower()
+    ideas = []
+    if any(word in lowered for word in ("case", "customer", "proof", "testimonial")):
+        ideas.append("Prepare a proof-led response asset with a stronger before/after story.")
+    if any(word in lowered for word in ("pricing", "discount", "free", "package")):
+        ideas.append("Clarify value and ROI instead of matching price directly.")
+    if any(word in lowered for word in ("feature", "launch", "integration", "product")):
+        ideas.append("Publish a comparison checklist focused on buyer outcomes, not feature volume.")
+    if any(word in lowered for word in ("seo", "blog", "keyword", "guide")):
+        ideas.append("Add a comparison or FAQ page targeting the same buyer intent.")
+    if not ideas:
+        ideas.append("Monitor for repeated patterns before changing campaign direction.")
+    return ideas
+
+
+def build_competitor_report(state: dict[str, Any], *, focus: str, period: str) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    competitors = [item for item in state.get("competitors", []) if isinstance(item, dict)]
+    observations = [item for item in state.get("competitorObservations", []) if isinstance(item, dict)]
+    gaps = build_positioning_gaps(strategy, competitors)
+    trends = build_market_trends(observations)
+    response_campaigns = build_response_campaigns(strategy, observations, gaps)
+    return {
+        "type": "competitor-intelligence-report",
+        "brand": strategy.get("brand", ""),
+        "focus": focus or "competitive intelligence",
+        "period": period or "latest period",
+        "competitorCount": len(competitors),
+        "observationCount": len(observations),
+        "competitors": competitors,
+        "recentObservations": observations[-10:],
+        "positioningGaps": gaps,
+        "marketTrends": trends,
+        "responseCampaigns": response_campaigns,
+        "approvalRequired": False,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_positioning_gaps(strategy: dict[str, Any], competitors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    brand_offer = str(strategy.get("offer") or "offer")
+    brand_themes = [str(item).lower() for item in strategy.get("themes", []) if str(item).strip()]
+    gaps = []
+    for competitor in competitors:
+        strengths = [str(item) for item in competitor.get("strengths", []) if str(item).strip()]
+        weaknesses = [str(item) for item in competitor.get("weaknesses", []) if str(item).strip()]
+        competitor_text = " ".join([str(competitor.get("positioning", "")), *strengths]).lower()
+        missing_theme = next((theme for theme in brand_themes if theme and theme not in competitor_text), "")
+        gaps.append(
+            {
+                "competitor": competitor.get("name", ""),
+                "risk": strengths[0] if strengths else "competitor has visible market presence",
+                "opening": weaknesses[0] if weaknesses else f"Differentiate {brand_offer} with clearer buyer proof.",
+                "recommendedMessage": f"Emphasize {missing_theme or 'measurable proof'} and show why {brand_offer} is easier to evaluate.",
+            }
+        )
+    return gaps
+
+
+def build_market_trends(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tag_counts: dict[str, int] = {}
+    impact_counts: dict[str, int] = {}
+    for observation in observations:
+        impact = str(observation.get("impact") or "medium")
+        impact_counts[impact] = impact_counts.get(impact, 0) + 1
+        for tag in observation.get("tags", []):
+            key = str(tag).lower()
+            tag_counts[key] = tag_counts.get(key, 0) + 1
+    trends = []
+    for tag, count in sorted(tag_counts.items(), key=lambda item: (-item[1], item[0]))[:5]:
+        trends.append({"topic": tag, "count": count, "recommendation": f"Watch {tag} messaging and prepare a differentiated proof point."})
+    if not trends:
+        trends.append({"topic": "insufficient observations", "count": 0, "recommendation": "Track at least three competitor moves before changing strategy."})
+    if impact_counts.get("high", 0):
+        trends.append({"topic": "high-impact competitor activity", "count": impact_counts["high"], "recommendation": "Review response campaigns in the next planning cycle."})
+    return trends
+
+
+def build_response_campaigns(strategy: dict[str, Any], observations: list[dict[str, Any]], gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    brand = str(strategy.get("brand") or "The brand")
+    offer = str(strategy.get("offer") or "the offer")
+    campaigns = []
+    high_impact = [item for item in observations if item.get("impact") == "high"]
+    if high_impact:
+        campaigns.append(
+            {
+                "name": "Competitive Proof Response",
+                "objective": "Reinforce buyer confidence after high-impact competitor activity.",
+                "message": f"{brand} should publish proof that {offer} creates measurable workflow improvement.",
+                "channels": ["LinkedIn", "SEO blog", "Email"],
+            }
+        )
+    if gaps:
+        campaigns.append(
+            {
+                "name": "Comparison Education Campaign",
+                "objective": "Own comparison intent without attacking competitors.",
+                "message": gaps[0]["recommendedMessage"],
+                "channels": ["SEO blog", "LinkedIn", "Sales enablement"],
+            }
+        )
+    if not campaigns:
+        campaigns.append(
+            {
+                "name": "Market Watch Nurture",
+                "objective": "Keep a light competitor watch while continuing the current campaign.",
+                "message": f"{brand} should keep publishing practical buyer education for {offer}.",
+                "channels": ["LinkedIn", "Email"],
+            }
+        )
+    return campaigns
+
+
+def upsert_by_id(items: list[dict[str, Any]], item: dict[str, Any]) -> list[dict[str, Any]]:
+    output = []
+    replaced = False
+    for existing in items:
+        if existing.get("id") == item.get("id"):
+            output.append(item)
+            replaced = True
+        else:
+            output.append(existing)
+    if not replaced:
+        output.append(item)
+    return output
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -1342,8 +1656,13 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     dashboard = state.get("lastReviewDashboard", {}) if isinstance(state.get("lastReviewDashboard"), dict) else {}
     if dashboard.get("artifactCounts"):
         lines.append(f"Review dashboard: `{dashboard.get('period', 'latest period')}` with `{len(dashboard.get('reviewQueue', []))}` review queues")
+    competitor_report_data = state.get("lastCompetitorReport", {}) if isinstance(state.get("lastCompetitorReport"), dict) else {}
+    if competitor_report_data.get("competitorCount"):
+        lines.append(
+            f"Competitor report: `{competitor_report_data.get('competitorCount')}` competitors, `{competitor_report_data.get('observationCount', 0)}` observations"
+        )
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, or review analytics.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, or track competitors.")
     return "\n".join(lines)
 
 
@@ -1441,6 +1760,30 @@ def record_review_dashboard(project_dir: Path, dashboard: dict[str, Any]) -> Non
     state.setdefault("reviewDashboards", []).append(dashboard)
     state["lastReviewDashboard"] = dashboard
     state["workflowState"] = "review_dashboard_ready"
+    write_state(project_dir, state)
+
+
+def record_competitor(project_dir: Path, competitor: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state["competitors"] = upsert_by_id([item for item in state.get("competitors", []) if isinstance(item, dict)], competitor)
+    state["lastCompetitor"] = competitor
+    state["workflowState"] = "competitor_profile_ready"
+    write_state(project_dir, state)
+
+
+def record_competitor_observation(project_dir: Path, observation: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("competitorObservations", []).append(observation)
+    state["lastCompetitorObservation"] = observation
+    state["workflowState"] = "competitor_observation_ready"
+    write_state(project_dir, state)
+
+
+def record_competitor_report(project_dir: Path, report: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("competitorReports", []).append(report)
+    state["lastCompetitorReport"] = report
+    state["workflowState"] = "competitor_report_ready"
     write_state(project_dir, state)
 
 
@@ -2174,6 +2517,100 @@ def render_review_dashboard_markdown(dashboard: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_competitor_profiles_markdown(competitors: list[dict[str, Any]]) -> str:
+    lines = ["# Competitor Profiles", "", "- Source: user-supplied competitor notes", ""]
+    for competitor in competitors:
+        lines.extend(
+            [
+                f"## {competitor.get('name', '')}",
+                "",
+                f"- ID: {competitor.get('id', '')}",
+                f"- URL: {competitor.get('url', '')}",
+                f"- Category: {competitor.get('category', '')}",
+                f"- Positioning: {competitor.get('positioning', '')}",
+                "",
+                "### Strengths",
+                *[f"- {item}" for item in competitor.get("strengths", [])],
+                "",
+                "### Weaknesses",
+                *[f"- {item}" for item in competitor.get("weaknesses", [])],
+                "",
+                "### Channels",
+                *[f"- {item}" for item in competitor.get("channels", [])],
+                "",
+                "### Watch Topics",
+                *[f"- {item}" for item in competitor.get("watchTopics", [])],
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_competitor_observations_markdown(observations: list[dict[str, Any]]) -> str:
+    lines = ["# Competitor Observations", "", "- Source: user-supplied market observations", ""]
+    for observation in observations:
+        lines.extend(
+            [
+                f"## {observation.get('competitorName', '')}: {observation.get('eventType', '')}",
+                "",
+                f"- ID: {observation.get('id', '')}",
+                f"- Channel: {observation.get('channel', '')}",
+                f"- Impact: {observation.get('impact', '')}",
+                f"- URL: {observation.get('url', '')}",
+                f"- Tags: {', '.join(observation.get('tags', []))}",
+                "",
+                "### Summary",
+                str(observation.get("summary", "")),
+                "",
+                "### Response Ideas",
+                *[f"- {item}" for item in observation.get("responseIdeas", [])],
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_competitor_report_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        f"# Competitor Intelligence Report: {report.get('brand', 'Marketing Project')}",
+        "",
+        f"- Focus: {report.get('focus', '')}",
+        f"- Period: {report.get('period', '')}",
+        f"- Competitors: {report.get('competitorCount', 0)}",
+        f"- Observations: {report.get('observationCount', 0)}",
+        "",
+        "## Positioning Gaps",
+    ]
+    for gap in report.get("positioningGaps", []):
+        lines.extend(
+            [
+                f"### {gap.get('competitor', '')}",
+                f"- Risk: {gap.get('risk', '')}",
+                f"- Opening: {gap.get('opening', '')}",
+                f"- Recommended message: {gap.get('recommendedMessage', '')}",
+                "",
+            ]
+        )
+    lines.append("## Market Trends")
+    for trend in report.get("marketTrends", []):
+        lines.extend([f"- {trend.get('topic', '')}: {trend.get('recommendation', '')}"])
+    lines.extend(["", "## Response Campaigns"])
+    for campaign in report.get("responseCampaigns", []):
+        lines.extend(
+            [
+                f"### {campaign.get('name', '')}",
+                f"- Objective: {campaign.get('objective', '')}",
+                f"- Message: {campaign.get('message', '')}",
+                "- Channels: " + ", ".join(campaign.get("channels", [])),
+                "",
+            ]
+        )
+    lines.append("## Recent Observations")
+    for observation in report.get("recentObservations", []):
+        lines.append(f"- {observation.get('competitorName', '')}: {observation.get('summary', '')}")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2287,6 +2724,34 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--focus", default="weekly marketing review", help="Dashboard focus.")
     dashboard.add_argument("--period", default="latest period", help="Reporting period.")
     dashboard.set_defaults(func=generate_review_dashboard)
+
+    competitor = subparsers.add_parser("add-competitor", help="Add or update a competitor profile for market intelligence.")
+    competitor.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    competitor.add_argument("--name", required=True, help="Competitor name.")
+    competitor.add_argument("--url", default="", help="Competitor website or profile URL.")
+    competitor.add_argument("--category", default="direct competitor", help="Competitor category.")
+    competitor.add_argument("--positioning", default="", help="Observed competitor positioning.")
+    competitor.add_argument("--strengths", default="", help="Comma-separated competitor strengths.")
+    competitor.add_argument("--weaknesses", default="", help="Comma-separated competitor weaknesses.")
+    competitor.add_argument("--channels", default="", help="Comma-separated competitor channels.")
+    competitor.set_defaults(func=add_competitor)
+
+    observation = subparsers.add_parser("track-competitor", help="Record one competitor move or market observation.")
+    observation.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    observation.add_argument("--competitor", default="", help="Competitor ID or name. Defaults to latest competitor.")
+    observation.add_argument("--event-type", default="market move", help="Observation type, such as launch, pricing, content, partnership.")
+    observation.add_argument("--channel", default="", help="Where the move was observed.")
+    observation.add_argument("--summary", required=True, help="Observation summary.")
+    observation.add_argument("--url", default="", help="Source URL.")
+    observation.add_argument("--impact", choices=("low", "medium", "high"), default="medium", help="Estimated competitive impact.")
+    observation.add_argument("--tags", default="", help="Comma-separated tags.")
+    observation.set_defaults(func=track_competitor)
+
+    report = subparsers.add_parser("competitor-report", help="Generate positioning gaps, trends, and response campaign recommendations.")
+    report.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    report.add_argument("--focus", default="competitive intelligence", help="Report focus.")
+    report.add_argument("--period", default="latest period", help="Reporting period.")
+    report.set_defaults(func=competitor_report)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

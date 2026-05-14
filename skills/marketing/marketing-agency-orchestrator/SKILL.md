@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -63,6 +63,14 @@ scripts/marketing_agency.py record-performance --project-dir "<project dir>" --c
 scripts/marketing_agency.py generate-review-dashboard --project-dir "<project dir>" --period "<period>"
 ```
 
+Phase 6 supports competitor intelligence:
+
+```bash
+scripts/marketing_agency.py add-competitor --project-dir "<project dir>" --name "<competitor>" --positioning "<positioning>"
+scripts/marketing_agency.py track-competitor --project-dir "<project dir>" --competitor "<competitor>" --summary "<market move>"
+scripts/marketing_agency.py competitor-report --project-dir "<project dir>" --period "<period>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -75,6 +83,8 @@ scripts/marketing_agency.py generate-review-dashboard --project-dir "<project di
   `define-lead-signals`, `score-lead`, `draft-outreach`, and `crm-export`.
 - **Analytics and review dashboards**: use `marketing-analytics`,
   `record-performance`, and `generate-review-dashboard`.
+- **Competitor intelligence**: use `competitor-intelligence`,
+  `add-competitor`, `track-competitor`, and `competitor-report`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.

@@ -606,3 +606,125 @@ def test_generate_review_dashboard_aggregates_assets_leads_and_performance(tmp_p
     assert "Manager Review Dashboard: Acme LiDAR" in markdown
     assert "Optimization Recommendations" in markdown
     assert state["workflowState"] == "review_dashboard_ready"
+
+
+def test_add_competitor_creates_profile_files_and_state(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+
+    result = run_script(
+        "add-competitor",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "MeasureMax",
+        "--url",
+        "https://example.com",
+        "--positioning",
+        "Fast truck scale analytics for aggregate operators",
+        "--strengths",
+        "strong demo videos,known in aggregates",
+        "--weaknesses",
+        "unclear ROI proof,limited AI answer content",
+        "--channels",
+        "LinkedIn,SEO blog,YouTube",
+    )
+
+    markdown = Path(result["competitorProfilesPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["competitor"]["id"] == "measuremax"
+    assert "Competitor Profiles" in markdown
+    assert "Fast truck scale analytics" in markdown
+    assert Path(result["competitorProfilesJsonPath"]).exists()
+    assert state["workflowState"] == "competitor_profile_ready"
+    assert state["lastCompetitor"]["name"] == "MeasureMax"
+
+
+def test_track_competitor_creates_observation_and_report_tracks_summary(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "add-competitor",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "MeasureMax",
+        "--positioning",
+        "Truck measurement dashboards for aggregates",
+        "--strengths",
+        "customer proof,YouTube demos",
+        "--weaknesses",
+        "limited workflow ROI content",
+    )
+
+    observation = run_script(
+        "track-competitor",
+        "--project-dir",
+        str(project_dir),
+        "--competitor",
+        "measuremax",
+        "--event-type",
+        "case study",
+        "--channel",
+        "LinkedIn",
+        "--summary",
+        "Published a new quarry case study emphasizing loading accuracy.",
+        "--impact",
+        "high",
+        "--tags",
+        "case study,accuracy,aggregates",
+    )
+    report = run_script(
+        "competitor-report",
+        "--project-dir",
+        str(project_dir),
+        "--focus",
+        "weekly competitor watch",
+        "--period",
+        "2026-W20",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    observations_md = Path(observation["competitorObservationsPath"]).read_text(encoding="utf-8")
+    report_md = Path(report["competitorReportPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert observation["ok"] is True
+    assert "Published a new quarry case study" in observations_md
+    assert "Prepare a proof-led response asset" in observations_md
+    assert report["ok"] is True
+    assert report["competitorReport"]["competitorCount"] == 1
+    assert report["competitorReport"]["observationCount"] == 1
+    assert report["competitorReport"]["marketTrends"][0]["topic"] == "accuracy"
+    assert "Competitor Intelligence Report: Acme LiDAR" in report_md
+    assert "Competitive Proof Response" in report_md
+    assert state["workflowState"] == "competitor_report_ready"
+    assert "Competitor report: `1` competitors, `1` observations" in summary["summary"]
