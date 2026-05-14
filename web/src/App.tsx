@@ -22,6 +22,7 @@ import {
   Code,
   Eye,
   Bot,
+  BookOpen,
 } from "lucide-react";
 import { Cell, Grid, SelectionSwitcher, Typography } from "@nous-research/ui";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ import AnalyticsPage from "@/pages/AnalyticsPage";
 import CronPage from "@/pages/CronPage";
 import SkillsPage from "@/pages/SkillsPage";
 import PortalPage from "@/pages/PortalPage";
+import AgencyDocsPage from "@/pages/AgencyDocsPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -53,6 +55,7 @@ const BUILTIN_ROUTES: Record<string, React.ComponentType> = {
   "/logs": LogsPage,
   "/cron": CronPage,
   "/skills": SkillsPage,
+  "/agency-docs": AgencyDocsPage,
   "/config": ConfigPage,
   "/env": EnvPage,
 };
@@ -75,6 +78,7 @@ const BUILTIN_NAV: NavItem[] = [
   { path: "/logs", labelKey: "logs", label: "Logs", icon: FileText },
   { path: "/cron", labelKey: "cron", label: "Cron", icon: Clock },
   { path: "/skills", labelKey: "skills", label: "Skills", icon: Package },
+  { path: "/agency-docs", label: "Agency Docs", icon: BookOpen },
   { path: "/config", labelKey: "config", label: "Config", icon: Settings },
   { path: "/env", labelKey: "keys", label: "Keys", icon: KeyRound },
 ];
@@ -103,6 +107,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Code,
   Eye,
   Bot,
+  BookOpen,
 };
 
 function resolveIcon(
