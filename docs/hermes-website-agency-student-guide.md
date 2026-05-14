@@ -55,6 +55,7 @@ scripts/website_agency.py change-style --project-dir generated-sites/acme-dental
 scripts/website_agency.py qa --project-dir generated-sites/acme-dental
 scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental
 scripts/website_agency.py deploy-prep --project-dir generated-sites/acme-dental --target auto
+scripts/website_agency.py deploy-run --project-dir generated-sites/acme-dental --target static-dir --destination /tmp/acme-deploy
 scripts/website_agency.py summary --project-dir generated-sites/acme-dental
 scripts/website_agency.py wordpress-package --project-dir generated-sites/acme-dental --title "Home" --slug home
 scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
@@ -216,7 +217,7 @@ captured:
 scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental --screenshots --url http://127.0.0.1:3010/
 ```
 
-## Deployment Prep
+## Deployment
 
 `deploy-prep` does not publish production changes by itself. It prepares
 deployment artifacts and notes:
@@ -225,5 +226,19 @@ deployment artifacts and notes:
 - Vercel/Netlify: settings and command notes
 - GitHub Pages: static package and setup notes
 
-Production deployment still requires user approval and the correct account or
-hosting credentials.
+`deploy-run` creates an executable deployment plan by default:
+
+```bash
+scripts/website_agency.py deploy-run --project-dir generated-sites/acme-dental --target static-dir --destination /tmp/acme-deploy
+```
+
+After approval, execute the deployment:
+
+```bash
+scripts/website_agency.py approval-record --project-dir generated-sites/acme-dental --target deploy --reference deploy-static-dir --decision approved
+scripts/website_agency.py deploy-run --project-dir generated-sites/acme-dental --target static-dir --destination /tmp/acme-deploy --execute
+```
+
+Supported run targets are `static-dir`, `github-pages`, `vercel`, and
+`netlify`. Production deployment still requires user approval and the correct
+account or hosting credentials.

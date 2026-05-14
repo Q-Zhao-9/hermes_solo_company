@@ -783,6 +783,157 @@ def test_deploy_prep_nextjs_vercel_settings(tmp_path):
     assert state["lastDeployment"]["target"] == "vercel"
 
 
+def test_deploy_run_returns_plan_without_execution(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "deploy-run",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "static-dir",
+        "--destination",
+        str(tmp_path / "published"),
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["dryRun"] is True
+    assert result["plan"]["kind"] == "copy-static"
+    assert state["lastDeployment"]["type"] == "deploy-plan"
+
+
+def test_deploy_run_requires_approval_for_execution(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "deploy-run",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "static-dir",
+        "--destination",
+        str(tmp_path / "published"),
+        "--execute",
+        check=False,
+    )
+
+    assert result["ok"] is False
+    assert "requires explicit approval" in result["error"]
+
+
+def test_deploy_run_static_dir_copies_files_with_recorded_approval(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--platform",
+        "static",
+        "--pages",
+        "home,about",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    destination = tmp_path / "published"
+    run_script(
+        "approval-record",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "deploy",
+        "--reference",
+        "deploy-static-dir",
+        "--decision",
+        "approved",
+    )
+
+    result = run_script(
+        "deploy-run",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "static-dir",
+        "--destination",
+        str(destination),
+        "--execute",
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert (destination / "index.html").exists()
+    assert (destination / "about.html").exists()
+    assert state["lastDeployment"]["type"] == "deploy-run"
+    assert state["lastDeployment"]["ok"] is True
+
+
+def test_deploy_run_vercel_executes_cli_with_approval(tmp_path, monkeypatch):
+    module = load_module()
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Portal",
+        "--description",
+        "SaaS dashboard with login for operations teams.",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    calls = []
+
+    class Completed:
+        returncode = 0
+        stdout = "Production: https://acme.vercel.app"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return Completed()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    result = module.deploy_run(
+        argparse.Namespace(
+            project_dir=str(project_dir),
+            target="vercel",
+            destination="",
+            reference="deploy-vercel",
+            execute=True,
+            approved=True,
+            prod=True,
+            yes=True,
+            timeout=30,
+        )
+    )
+
+    assert result["ok"] is True
+    assert calls[0][0] == ["vercel", "deploy", "--prod", "--yes"]
+    assert result["deployment"]["publicUrl"] == "https://acme.vercel.app"
+
+
 def test_visual_qa_passes_for_generated_static_site(tmp_path):
     generated = run_script(
         "create-site",

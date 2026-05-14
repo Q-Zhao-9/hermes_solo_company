@@ -20,4 +20,11 @@ For static HTML and Next.js preparation, prefer:
 
 ```bash
 scripts/website_agency.py deploy-prep --project-dir "<project dir>" --target auto
+scripts/website_agency.py deploy-run --project-dir "<project dir>" --target auto
+```
+
+Only execute after approval:
+
+```bash
+scripts/website_agency.py deploy-run --project-dir "<project dir>" --target "<target>" --execute
 ```

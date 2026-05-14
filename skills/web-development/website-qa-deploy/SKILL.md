@@ -76,6 +76,13 @@ docs/hermes-website-state.json
 - **Shopify**: theme or app extension workflow; do not modify checkout without
   explicit scope.
 
+Use `deploy-run` for deployment plans and approved execution:
+
+```bash
+scripts/website_agency.py deploy-run --project-dir "<project dir>" --target auto
+scripts/website_agency.py deploy-run --project-dir "<project dir>" --target "<target>" --execute
+```
+
 ## Approval Workflow
 
 For production deployment or WordPress writes, record the approval request and

@@ -1593,6 +1593,165 @@ def deploy_prep(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def deploy_run(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    platform = detect_platform(project_dir)
+    target = args.target
+    if target == "auto":
+        target = "static-dir" if platform == "static" else "vercel"
+    reference = args.reference or f"deploy-{target}"
+    plan = deployment_plan(project_dir, platform, target, args)
+    if not plan.get("ok"):
+        return plan
+    if not args.execute:
+        record_deployment(
+            project_dir,
+            {
+                "type": "deploy-plan",
+                "target": target,
+                "platform": platform,
+                "commands": plan.get("commands", []),
+                "destination": plan.get("destination", ""),
+            },
+        )
+        return {
+            "ok": True,
+            "dryRun": True,
+            "projectDir": str(project_dir),
+            "platform": platform,
+            "target": target,
+            "plan": plan,
+            "message": "Deployment plan created. Re-run with --execute after approval to publish.",
+        }
+    if not args.approved and not has_approval(project_dir, "deploy", reference):
+        return {
+            "ok": False,
+            "error": "Deployment requires explicit approval. Record approval with approval-record --target deploy or re-run with --approved.",
+            "plan": plan,
+        }
+    result = execute_deployment_plan(project_dir, plan, timeout=args.timeout)
+    deployment = {
+        "type": "deploy-run",
+        "target": target,
+        "platform": platform,
+        "ok": bool(result.get("ok")),
+        "commands": plan.get("commands", []),
+        "destination": plan.get("destination", ""),
+        "publicUrl": result.get("publicUrl", ""),
+        "approval": "flag" if args.approved else approval_id("deploy", normalize_approval_reference(project_dir, reference)),
+    }
+    record_deployment(project_dir, deployment)
+    return {
+        "ok": bool(result.get("ok")),
+        "projectDir": str(project_dir),
+        "platform": platform,
+        "target": target,
+        "deployment": result,
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def deployment_plan(project_dir: Path, platform: str, target: str, args: argparse.Namespace) -> dict[str, Any]:
+    if target == "static-dir":
+        if platform != "static":
+            return {"ok": False, "error": "static-dir deployment supports static HTML projects only."}
+        if not args.destination:
+            return {"ok": False, "error": "--destination is required for static-dir deployment."}
+        destination = str(Path(args.destination).expanduser().resolve())
+        return {
+            "ok": True,
+            "kind": "copy-static",
+            "destination": destination,
+            "commands": [f"copy static site files to {destination}"],
+        }
+    if target == "github-pages":
+        if platform != "static":
+            return {"ok": False, "error": "github-pages deployment supports static HTML projects only."}
+        destination = str(Path(args.destination).expanduser().resolve()) if args.destination else str(project_dir / DEPLOY_DIR / "github-pages-site")
+        return {
+            "ok": True,
+            "kind": "copy-static",
+            "destination": destination,
+            "commands": [f"copy GitHub Pages-ready static files to {destination}"],
+            "nextSteps": ["Commit the copied files to the configured GitHub Pages branch/folder."],
+        }
+    if target == "vercel":
+        command = ["vercel", "deploy"]
+        if args.prod:
+            command.append("--prod")
+        if args.yes:
+            command.append("--yes")
+        return {"ok": True, "kind": "command", "commands": [" ".join(command)], "argv": command}
+    if target == "netlify":
+        command = ["netlify", "deploy"]
+        if args.prod:
+            command.append("--prod")
+        if platform == "static":
+            command.extend(["--dir", "."])
+        else:
+            command.append("--build")
+        return {"ok": True, "kind": "command", "commands": [" ".join(command)], "argv": command}
+    return {"ok": False, "error": f"Unsupported deploy target: {target}"}
+
+
+def execute_deployment_plan(project_dir: Path, plan: dict[str, Any], timeout: int) -> dict[str, Any]:
+    if plan.get("kind") == "copy-static":
+        destination = Path(str(plan.get("destination") or "")).expanduser().resolve()
+        if not destination:
+            return {"ok": False, "error": "Deployment destination is missing."}
+        copy_static_site(project_dir, destination)
+        return {"ok": True, "destination": str(destination), "message": "Static site files copied."}
+    if plan.get("kind") == "command":
+        argv = plan.get("argv")
+        if not isinstance(argv, list) or not argv:
+            return {"ok": False, "error": "Deployment command is missing."}
+        try:
+            completed = subprocess.run(
+                [str(item) for item in argv],
+                cwd=str(project_dir),
+                capture_output=True,
+                text=True,
+                timeout=max(10, int(timeout or 300)),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"ok": False, "error": str(exc)}
+        output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+        if len(output) > 4000:
+            output = output[-4000:]
+        return {
+            "ok": completed.returncode == 0,
+            "exitCode": completed.returncode,
+            "output": output,
+            "publicUrl": first_url(output),
+        }
+    return {"ok": False, "error": f"Unsupported deployment plan kind: {plan.get('kind')}"}
+
+
+def copy_static_site(project_dir: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    include = ["index.html", "styles.css", "assets", "images", "public"]
+    for path in project_dir.glob("*.html"):
+        shutil.copy2(path, destination / path.name)
+    for name in include:
+        source = project_dir / name
+        if not source.exists() or source.name.endswith(".html"):
+            continue
+        target = destination / name
+        if source.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(source, target)
+        elif source.is_file():
+            shutil.copy2(source, target)
+
+
+def first_url(value: str) -> str:
+    match = re.search(r"https?://[^\s)]+", value or "")
+    return match.group(0) if match else ""
+
+
 def add_page(args: argparse.Namespace) -> dict[str, Any]:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists():
@@ -3468,6 +3627,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deployment target to prepare.",
     )
     deploy.set_defaults(func=deploy_prep)
+
+    deploy_run_parser = subparsers.add_parser("deploy-run", help="Create or execute an approved deployment.")
+    deploy_run_parser.add_argument("--project-dir", default=".", help="Website project directory.")
+    deploy_run_parser.add_argument(
+        "--target",
+        choices=("auto", "static-dir", "vercel", "netlify", "github-pages"),
+        default="auto",
+        help="Deployment target to run.",
+    )
+    deploy_run_parser.add_argument("--destination", default="", help="Destination directory for static-dir or github-pages.")
+    deploy_run_parser.add_argument("--reference", default="", help="Approval reference. Defaults to deploy-<target>.")
+    deploy_run_parser.add_argument("--execute", action="store_true", help="Actually run the deployment. Without this, only returns a plan.")
+    deploy_run_parser.add_argument("--approved", action="store_true", help="Explicit approval override for deployment execution.")
+    deploy_run_parser.add_argument("--prod", action="store_true", help="Production deploy for Vercel/Netlify.")
+    deploy_run_parser.add_argument("--yes", action="store_true", help="Pass --yes to Vercel.")
+    deploy_run_parser.add_argument("--timeout", type=int, default=600)
+    deploy_run_parser.set_defaults(func=deploy_run)
 
     add_page_parser = subparsers.add_parser("add-page", help="Add a generated page and update site navigation/history.")
     add_page_parser.add_argument("--project-dir", default=".", help="Website project directory.")
