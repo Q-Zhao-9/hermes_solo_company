@@ -2,8 +2,8 @@
 """Deterministic helpers for Hermes marketing and SEO agency workflows.
 
 Phase 1 focuses on strategy and campaign memory. Phase 2 adds content planning
-and draft generation. It avoids network access and does not publish, message,
-email, or modify external systems.
+and draft generation. Phase 3 adds SEO/GEO planning and blog briefs. It avoids
+network access and does not publish, message, email, or modify external systems.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import Any
 
 STATE_PATH = Path("docs") / "hermes-marketing-state.json"
 CONTENT_DIR = Path("docs") / "content"
+SEO_DIR = Path("docs") / "seo"
 
 
 @dataclass(frozen=True)
@@ -58,19 +59,33 @@ def write_text(path: Path, content: str) -> None:
 
 def read_state(state_file: Path) -> dict[str, Any]:
     if not state_file.exists():
-        return {"version": 1, "strategies": [], "campaigns": [], "contentPlans": [], "contentDrafts": []}
+        return default_state()
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"version": 1, "strategies": [], "campaigns": [], "contentPlans": [], "contentDrafts": []}
+        return default_state()
     if not isinstance(data, dict):
-        return {"version": 1, "strategies": [], "campaigns": [], "contentPlans": [], "contentDrafts": []}
+        return default_state()
     data.setdefault("version", 1)
     data.setdefault("strategies", [])
     data.setdefault("campaigns", [])
     data.setdefault("contentPlans", [])
     data.setdefault("contentDrafts", [])
+    data.setdefault("seoPlans", [])
+    data.setdefault("blogBriefs", [])
     return data
+
+
+def default_state() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "strategies": [],
+        "campaigns": [],
+        "contentPlans": [],
+        "contentDrafts": [],
+        "seoPlans": [],
+        "blogBriefs": [],
+    }
 
 
 def write_state(project_dir: Path, state: dict[str, Any]) -> None:
@@ -232,6 +247,64 @@ def generate_posts(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def generate_seo_plan(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    campaign = select_campaign(state, args.campaign)
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    plan = build_seo_plan(
+        strategy,
+        campaign,
+        focus=args.focus,
+        pages=max(1, args.pages),
+        region=args.region,
+    )
+    seo_path = project_dir / SEO_DIR / "seo-geo-plan.md"
+    seo_json_path = project_dir / SEO_DIR / "seo-geo-plan.json"
+    write_text(seo_path, render_seo_plan_markdown(plan))
+    write_text(seo_json_path, json.dumps(plan, indent=2))
+    record_seo_plan(project_dir, plan)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "seoPlan": plan,
+        "seoPlanPath": str(seo_path),
+        "seoPlanJsonPath": str(seo_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Generate search-intent blog briefs with generate-blog-briefs.",
+    }
+
+
+def generate_blog_briefs(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    seo_plan = state.get("lastSeoPlan", {}) if isinstance(state.get("lastSeoPlan"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    briefs = build_blog_briefs(strategy, seo_plan, count=max(1, args.count), intent=args.intent)
+    briefs_path = project_dir / SEO_DIR / "blog-briefs.md"
+    briefs_json_path = project_dir / SEO_DIR / "blog-briefs.json"
+    write_text(briefs_path, render_blog_briefs_markdown(briefs))
+    write_text(briefs_json_path, json.dumps(briefs, indent=2))
+    record_blog_briefs(project_dir, briefs)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "blogBriefs": briefs,
+        "blogBriefsPath": str(briefs_path),
+        "blogBriefsJsonPath": str(briefs_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "SEO/GEO blog briefs created for review. Publishing requires explicit approval.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -328,6 +401,104 @@ def build_content_drafts(
     }
 
 
+def build_seo_plan(
+    strategy: dict[str, Any],
+    campaign: dict[str, Any],
+    *,
+    focus: str,
+    pages: int,
+    region: str,
+) -> dict[str, Any]:
+    brand = str(strategy.get("brand") or "Brand")
+    business = str(strategy.get("business") or "")
+    audience = str(strategy.get("audience") or "target customers")
+    offer = str(campaign.get("offer") or strategy.get("offer") or focus or "solution")
+    seo_focus = strategy.get("seoFocus", {}) if isinstance(strategy.get("seoFocus"), dict) else {}
+    base_clusters = seo_focus.get("keywordClusters", []) if isinstance(seo_focus.get("keywordClusters"), list) else []
+    clusters = build_keyword_clusters(offer, audience, business, base_clusters)
+    page_plan = []
+    page_types = ["pillar", "comparison", "use-case", "faq", "case-study", "integration"]
+    for index in range(pages):
+        cluster = clusters[index % len(clusters)]
+        page_type = page_types[index % len(page_types)]
+        page_plan.append(
+            {
+                "type": page_type,
+                "title": seo_page_title(page_type, cluster, brand),
+                "primaryKeyword": cluster["primary"],
+                "intent": cluster["intent"],
+                "cta": campaign.get("cta") or strategy.get("goal") or "Book a consultation",
+                "internalLinks": suggested_internal_links(page_type),
+            }
+        )
+    return {
+        "type": "seo-geo-plan",
+        "brand": brand,
+        "offer": offer,
+        "audience": audience,
+        "region": region or strategy.get("region") or "global",
+        "focus": focus or offer,
+        "keywordClusters": clusters,
+        "pagePlan": page_plan,
+        "geoRecommendations": build_geo_recommendations(brand, offer, audience),
+        "schemaRecommendations": ["Organization", "Product", "FAQPage", "HowTo", "Article", "BreadcrumbList"],
+        "technicalTasks": [
+            "Write unique title and meta description for every campaign landing page.",
+            "Add FAQ blocks that answer buyer objections in plain language.",
+            "Use descriptive H1/H2 headings that include the offer and audience.",
+            "Add internal links from blog briefs to the pillar page and conversion page.",
+            "Keep terminology consistent across website, blog, social, and outreach.",
+        ],
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_blog_briefs(strategy: dict[str, Any], seo_plan: dict[str, Any], *, count: int, intent: str) -> dict[str, Any]:
+    brand = str(strategy.get("brand") or "Brand")
+    audience = str(strategy.get("audience") or "target customers")
+    offer = str(seo_plan.get("offer") or strategy.get("offer") or "solution")
+    clusters = seo_plan.get("keywordClusters", []) if isinstance(seo_plan.get("keywordClusters"), list) else []
+    if not clusters:
+        clusters = build_keyword_clusters(offer, audience, str(strategy.get("business") or ""), [])
+    intents = [intent] if intent else ["informational", "commercial", "comparison", "problem-aware"]
+    briefs = []
+    for index in range(count):
+        cluster = clusters[index % len(clusters)]
+        active_intent = intents[index % len(intents)]
+        title = blog_title(active_intent, cluster["primary"], offer)
+        briefs.append(
+            {
+                "title": title,
+                "slug": slugify(title, fallback=f"blog-{index + 1}"),
+                "intent": active_intent,
+                "primaryKeyword": cluster["primary"],
+                "secondaryKeywords": cluster["secondary"],
+                "audience": audience,
+                "metaDescription": f"Learn how {audience} can evaluate {offer}, compare options, and make a confident next decision.",
+                "outline": [
+                    f"Define the problem behind {cluster['primary']}",
+                    f"Explain what {audience} should measure or compare",
+                    f"Show how {offer} changes the workflow",
+                    "Answer common objections",
+                    f"CTA: {brand} consultation or demo",
+                ],
+                "aiAnswerSummary": f"{brand} helps {audience} understand and evaluate {offer} with clear proof, use cases, and next steps.",
+                "schema": ["Article", "FAQPage", "BreadcrumbList"],
+                "internalLinks": ["pillar page", "campaign landing page", "case study", "contact/demo page"],
+                "approvalStatus": "draft",
+            }
+        )
+    return {
+        "type": "blog-briefs",
+        "brand": brand,
+        "offer": offer,
+        "briefs": briefs,
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -388,6 +559,12 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     drafts = state.get("lastContentDrafts", {}) if isinstance(state.get("lastContentDrafts"), dict) else {}
     if drafts.get("drafts"):
         lines.append(f"Content drafts: `{len(drafts['drafts'])}` ready for review")
+    seo_plan = state.get("lastSeoPlan", {}) if isinstance(state.get("lastSeoPlan"), dict) else {}
+    if seo_plan.get("keywordClusters"):
+        lines.append(f"SEO/GEO plan: `{len(seo_plan['keywordClusters'])}` keyword clusters")
+    blog_briefs = state.get("lastBlogBriefs", {}) if isinstance(state.get("lastBlogBriefs"), dict) else {}
+    if blog_briefs.get("briefs"):
+        lines.append(f"Blog briefs: `{len(blog_briefs['briefs'])}` ready for review")
     lines.append("")
     lines.append("Next: create a campaign, generate content plan, or prepare SEO/GEO tasks.")
     return "\n".join(lines)
@@ -423,6 +600,22 @@ def record_content_drafts(project_dir: Path, drafts: dict[str, Any]) -> None:
     state.setdefault("contentDrafts", []).append(drafts)
     state["lastContentDrafts"] = drafts
     state["workflowState"] = "content_drafts_ready"
+    write_state(project_dir, state)
+
+
+def record_seo_plan(project_dir: Path, plan: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("seoPlans", []).append(plan)
+    state["lastSeoPlan"] = plan
+    state["workflowState"] = "seo_plan_ready"
+    write_state(project_dir, state)
+
+
+def record_blog_briefs(project_dir: Path, briefs: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("blogBriefs", []).append(briefs)
+    state["lastBlogBriefs"] = briefs
+    state["workflowState"] = "blog_briefs_ready"
     write_state(project_dir, state)
 
 
@@ -510,6 +703,91 @@ def build_seo_focus(business: str, offer: str, audience: str) -> dict[str, Any]:
             "Use consistent terminology across site, blog, social, and outreach.",
         ],
     }
+
+
+def build_keyword_clusters(offer: str, audience: str, business: str, base_clusters: list[Any]) -> list[dict[str, Any]]:
+    roots = [str(item) for item in base_clusters if str(item).strip()]
+    root = slugify(offer or business, fallback="solution").replace("-", " ")
+    audience_term = slugify(audience, fallback="customers").replace("-", " ")
+    roots.extend(
+        [
+            f"{root} for {audience_term}",
+            f"{root} ROI",
+            f"{root} comparison",
+            f"{root} implementation",
+            f"{root} case study",
+            f"{root} FAQ",
+        ]
+    )
+    unique_roots = []
+    for item in roots:
+        if item not in unique_roots:
+            unique_roots.append(item)
+    clusters = []
+    for index, primary in enumerate(unique_roots[:8]):
+        clusters.append(
+            {
+                "primary": primary,
+                "intent": ["commercial", "informational", "comparison", "problem-aware"][index % 4],
+                "secondary": [
+                    f"{primary} benefits",
+                    f"{primary} cost",
+                    f"{primary} examples",
+                ],
+                "questions": [
+                    f"What is {primary}?",
+                    f"How do buyers evaluate {primary}?",
+                    f"What results should teams expect from {primary}?",
+                ],
+            }
+        )
+    return clusters
+
+
+def seo_page_title(page_type: str, cluster: dict[str, Any], brand: str) -> str:
+    primary = cluster["primary"]
+    if page_type == "pillar":
+        return f"{primary.title()}: Complete Buyer Guide"
+    if page_type == "comparison":
+        return f"How to Compare {primary.title()} Options"
+    if page_type == "use-case":
+        return f"{primary.title()} Use Cases for Operations Teams"
+    if page_type == "faq":
+        return f"{primary.title()} FAQ"
+    if page_type == "case-study":
+        return f"{brand} Case Study: {primary.title()}"
+    return f"{primary.title()} Integration Guide"
+
+
+def suggested_internal_links(page_type: str) -> list[str]:
+    common = ["campaign landing page", "contact/demo page"]
+    if page_type == "pillar":
+        return ["comparison page", "FAQ page", "case study", *common]
+    if page_type == "comparison":
+        return ["pillar page", "pricing or ROI section", *common]
+    if page_type == "faq":
+        return ["pillar page", "supporting blog posts", *common]
+    return ["pillar page", "related use case", *common]
+
+
+def build_geo_recommendations(brand: str, offer: str, audience: str) -> list[str]:
+    return [
+        f"Write a concise category definition for {offer} that AI answer engines can quote.",
+        f"Publish a {brand} FAQ that directly answers buyer questions from {audience}.",
+        "Create comparison pages that explain selection criteria without attacking competitors.",
+        "Use consistent entities: brand name, product category, audience, industry, and use cases.",
+        "Add short answer blocks under H2 headings so AI snippets can extract complete answers.",
+    ]
+
+
+def blog_title(intent: str, primary_keyword: str, offer: str) -> str:
+    if intent == "comparison":
+        return f"How to Compare {primary_keyword.title()} Vendors"
+    if intent == "commercial":
+        return f"Best Practices for Buying {offer.title()}"
+    if intent == "problem-aware":
+        return f"Why Teams Struggle With {primary_keyword.title()}"
+    return f"What Is {primary_keyword.title()}?"
 
 
 def campaign_angle(channel: str, objective: str, offer: str) -> str:
@@ -815,6 +1093,92 @@ def render_drafts_markdown(drafts: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_seo_plan_markdown(plan: dict[str, Any]) -> str:
+    lines = [
+        f"# SEO + GEO Plan: {plan['brand']}",
+        "",
+        f"- Offer: {plan['offer']}",
+        f"- Audience: {plan['audience']}",
+        f"- Region: {plan['region']}",
+        f"- Focus: {plan['focus']}",
+        "",
+        "## Keyword Clusters",
+    ]
+    for cluster in plan["keywordClusters"]:
+        lines.extend(
+            [
+                f"### {cluster['primary']}",
+                f"- Intent: {cluster['intent']}",
+                "- Secondary: " + ", ".join(cluster["secondary"]),
+                "- Questions:",
+                *[f"  - {question}" for question in cluster["questions"]],
+                "",
+            ]
+        )
+    lines.append("## Page Plan")
+    for page in plan["pagePlan"]:
+        lines.extend(
+            [
+                f"### {page['title']}",
+                f"- Type: {page['type']}",
+                f"- Primary keyword: {page['primaryKeyword']}",
+                f"- Intent: {page['intent']}",
+                f"- CTA: {page['cta']}",
+                "- Internal links: " + ", ".join(page["internalLinks"]),
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## AI Answer Engine Recommendations",
+            *[f"- {item}" for item in plan["geoRecommendations"]],
+            "",
+            "## Schema Recommendations",
+            *[f"- {item}" for item in plan["schemaRecommendations"]],
+            "",
+            "## Technical Tasks",
+            *[f"- {item}" for item in plan["technicalTasks"]],
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_blog_briefs_markdown(briefs: dict[str, Any]) -> str:
+    lines = [
+        f"# SEO Blog Briefs: {briefs['brand']}",
+        "",
+        f"- Offer: {briefs['offer']}",
+        "- Approval: required before publishing",
+        "",
+    ]
+    for brief in briefs["briefs"]:
+        lines.extend(
+            [
+                f"## {brief['title']}",
+                "",
+                f"- Slug: {brief['slug']}",
+                f"- Intent: {brief['intent']}",
+                f"- Primary keyword: {brief['primaryKeyword']}",
+                "- Secondary keywords: " + ", ".join(brief["secondaryKeywords"]),
+                f"- Meta description: {brief['metaDescription']}",
+                "",
+                "### Outline",
+                *[f"- {item}" for item in brief["outline"]],
+                "",
+                "### AI Answer Summary",
+                brief["aiAnswerSummary"],
+                "",
+                "### Schema",
+                *[f"- {item}" for item in brief["schema"]],
+                "",
+                "### Internal Links",
+                *[f"- {item}" for item in brief["internalLinks"]],
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -858,6 +1222,25 @@ def build_parser() -> argparse.ArgumentParser:
     posts.add_argument("--theme", default="", help="Optional content theme override.")
     posts.add_argument("--stage", choices=("awareness", "consideration", "conversion", ""), default="", help="Funnel stage override.")
     posts.set_defaults(func=generate_posts)
+
+    seo = subparsers.add_parser("generate-seo-plan", help="Generate SEO/GEO keyword, page, schema, and internal-link plan.")
+    seo.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    seo.add_argument("--campaign", default="", help="Campaign slug. Defaults to latest campaign when available.")
+    seo.add_argument("--focus", default="", help="SEO focus or product category override.")
+    seo.add_argument("--pages", type=int, default=6, help="Number of SEO pages to plan.")
+    seo.add_argument("--region", default="", help="Target region override.")
+    seo.set_defaults(func=generate_seo_plan)
+
+    briefs = subparsers.add_parser("generate-blog-briefs", help="Generate SEO/GEO blog briefs from the latest SEO plan.")
+    briefs.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    briefs.add_argument("--count", type=int, default=4, help="Number of blog briefs to create.")
+    briefs.add_argument(
+        "--intent",
+        choices=("informational", "commercial", "comparison", "problem-aware", ""),
+        default="",
+        help="Search intent override.",
+    )
+    briefs.set_defaults(func=generate_blog_briefs)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

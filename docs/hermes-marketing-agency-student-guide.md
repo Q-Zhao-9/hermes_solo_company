@@ -121,9 +121,9 @@ Draft by default. Ask for explicit approval before:
 - writing CRM records
 - changing production website, WordPress, or Shopify content
 
-## Phase 3 Preview
+## What Phase 3 Adds
 
-The next phase should add SEO/GEO depth:
+Phase 3 adds SEO/GEO depth:
 
 - keyword clusters
 - blog briefs by search intent
@@ -131,3 +131,41 @@ The next phase should add SEO/GEO depth:
 - schema recommendations
 - landing page SEO tasks
 - internal linking plan
+
+Generate an SEO/GEO plan:
+
+```bash
+scripts/marketing_agency.py generate-seo-plan \
+  --project-dir generated-marketing/acme-lidar \
+  --focus "truck volume measurement" \
+  --pages 6 \
+  --region "North America"
+```
+
+Generate blog briefs:
+
+```bash
+scripts/marketing_agency.py generate-blog-briefs \
+  --project-dir generated-marketing/acme-lidar \
+  --count 4 \
+  --intent commercial
+```
+
+Phase 3 writes:
+
+```text
+docs/seo/seo-geo-plan.md
+docs/seo/seo-geo-plan.json
+docs/seo/blog-briefs.md
+docs/seo/blog-briefs.json
+```
+
+## Phase 4 Preview
+
+The next phase should add lead detection and CRM handoff:
+
+- lead signal definitions
+- lead scorecards
+- outreach drafts
+- CRM-ready JSON/CSV export
+- follow-up schedule

@@ -227,3 +227,96 @@ def test_generate_posts_creates_platform_drafts_and_summary_tracks_them(tmp_path
     assert state["workflowState"] == "content_drafts_ready"
     assert state["lastContentDrafts"]["approvalRequired"] is True
     assert "Content drafts: `4` ready for review" in summary["summary"]
+
+
+def test_generate_seo_plan_creates_keyword_page_and_schema_plan(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+    )
+
+    result = run_script(
+        "generate-seo-plan",
+        "--project-dir",
+        str(project_dir),
+        "--focus",
+        "truck volume measurement",
+        "--pages",
+        "4",
+        "--region",
+        "North America",
+    )
+
+    markdown = Path(result["seoPlanPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert len(result["seoPlan"]["keywordClusters"]) >= 4
+    assert len(result["seoPlan"]["pagePlan"]) == 4
+    assert "FAQPage" in result["seoPlan"]["schemaRecommendations"]
+    assert "AI Answer Engine Recommendations" in markdown
+    assert state["workflowState"] == "seo_plan_ready"
+    assert state["lastSeoPlan"]["region"] == "North America"
+
+
+def test_generate_blog_briefs_uses_seo_plan_and_summary_tracks_them(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme AI",
+        "--business",
+        "AI workflow automation software for operations teams.",
+        "--audience",
+        "operations leaders",
+        "--goal",
+        "Book demos",
+        "--offer",
+        "workflow automation platform",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script("generate-seo-plan", "--project-dir", str(project_dir), "--pages", "3")
+
+    result = run_script(
+        "generate-blog-briefs",
+        "--project-dir",
+        str(project_dir),
+        "--count",
+        "3",
+        "--intent",
+        "comparison",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    markdown = Path(result["blogBriefsPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert len(result["blogBriefs"]["briefs"]) == 3
+    assert result["blogBriefs"]["briefs"][0]["intent"] == "comparison"
+    assert "How to Compare" in result["blogBriefs"]["briefs"][0]["title"]
+    assert "AI Answer Summary" in markdown
+    assert state["workflowState"] == "blog_briefs_ready"
+    assert state["lastBlogBriefs"]["approvalRequired"] is True
+    assert "SEO/GEO plan: `" in summary["summary"]
+    assert "Blog briefs: `3` ready for review" in summary["summary"]

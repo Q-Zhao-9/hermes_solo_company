@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -40,12 +40,21 @@ scripts/marketing_agency.py generate-content-plan --project-dir "<project dir>" 
 scripts/marketing_agency.py generate-posts --project-dir "<project dir>" --channels "LinkedIn,X,SEO blog,Email"
 ```
 
+Phase 3 supports SEO/GEO planning and blog briefs:
+
+```bash
+scripts/marketing_agency.py generate-seo-plan --project-dir "<project dir>" --focus "<offer>" --pages 6
+scripts/marketing_agency.py generate-blog-briefs --project-dir "<project dir>" --count 4
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
 - **Campaign planning**: use `create-campaign`.
 - **Content calendar**: use `social-calendar` and `generate-content-plan`.
 - **Content drafts**: use `content-studio` and `generate-posts`.
+- **SEO/GEO**: use `seo-geo-growth`, `generate-seo-plan`, and
+  `generate-blog-briefs`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.
