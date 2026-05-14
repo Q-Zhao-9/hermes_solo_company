@@ -30,6 +30,7 @@ DEFAULT_PORT = 3010
 STATE_PATH = Path("docs") / "hermes-website-state.json"
 DEPLOY_DIR = Path("dist") / "hermes-deploy"
 WORDPRESS_DIR = Path("dist") / "hermes-wordpress"
+MEDIA_DIR = Path("assets") / "images"
 
 
 @dataclass(frozen=True)
@@ -1629,6 +1630,228 @@ def add_page(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def media_plan(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    spec = SiteSpec(
+        name=str(project.get("name") or project_dir.name.replace("-", " ").title()),
+        description=str(project.get("description") or ""),
+        audience=str(project.get("audience") or "target customers"),
+        goal=str(project.get("goal") or "Contact us"),
+        tone=str(project.get("tone") or "professional"),
+        platform=detect_platform(project_dir),
+        template=str(project.get("template") or "local-service"),
+        slug=str(project.get("slug") or project_dir.name),
+    )
+    pages = pages_from_state(project_dir, state, spec)
+    if args.pages:
+        wanted = {slugify(item.strip(), fallback="page") for item in args.pages.split(",") if item.strip()}
+        pages = [page for page in pages if page.slug in wanted]
+    assets = build_media_assets(spec, pages, args.style, max(1, args.per_page))
+    media_dir = project_dir / MEDIA_DIR
+    media_dir.mkdir(parents=True, exist_ok=True)
+    if args.placeholders:
+        for asset in assets:
+            write_text(project_dir / asset["path"], render_placeholder_svg(asset, spec))
+    manifest_path = project_dir / "docs" / "media-plan.json"
+    notes_path = project_dir / "docs" / "media-plan.md"
+    write_text(manifest_path, json.dumps({"version": 1, "assets": assets}, indent=2))
+    write_media_plan_markdown(notes_path, assets)
+    record_media(project_dir, {"type": "media-plan", "assets": assets, "manifestPath": str(manifest_path.relative_to(project_dir))})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "assets": assets,
+        "manifestPath": str(manifest_path),
+        "notesPath": str(notes_path),
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def build_media_assets(spec: SiteSpec, pages: list[PageSpec], style: str, per_page: int) -> list[dict[str, Any]]:
+    assets = []
+    for page in pages:
+        for index in range(per_page):
+            slot = "hero" if index == 0 else f"supporting-{index + 1}"
+            filename = f"{page.slug}-{slot}.svg"
+            prompt = (
+                f"{style} website image for {spec.name}, {page.title} page, "
+                f"serving {spec.audience}, professional composition, no text in image"
+            )
+            assets.append(
+                {
+                    "id": slugify(f"{page.slug}-{slot}", fallback="asset"),
+                    "page": page.slug,
+                    "slot": slot,
+                    "title": f"{page.title} {slot.title()} Image",
+                    "filename": filename,
+                    "path": str(MEDIA_DIR / filename),
+                    "altText": f"{spec.name} {page.title.lower()} visual for {spec.audience}",
+                    "prompt": prompt,
+                    "status": "placeholder",
+                }
+            )
+    return assets
+
+
+def render_placeholder_svg(asset: dict[str, Any], spec: SiteSpec) -> str:
+    title = escape_html(str(asset.get("title") or "Website image"))
+    subtitle = escape_html(spec.name)
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="{escape_html(str(asset.get("altText") or title))}">
+  <rect width="1200" height="720" fill="#e6f3f1"/>
+  <rect x="72" y="72" width="1056" height="576" rx="28" fill="#ffffff" stroke="#d9e2ec" stroke-width="3"/>
+  <circle cx="218" cy="238" r="82" fill="#0f766e" opacity="0.18"/>
+  <rect x="348" y="208" width="562" height="34" rx="17" fill="#0f766e" opacity="0.28"/>
+  <rect x="348" y="272" width="430" height="24" rx="12" fill="#18212f" opacity="0.16"/>
+  <rect x="168" y="412" width="864" height="116" rx="20" fill="#f8fafc" stroke="#d9e2ec"/>
+  <text x="168" y="592" fill="#18212f" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">{title}</text>
+  <text x="168" y="632" fill="#0f766e" font-family="Arial, Helvetica, sans-serif" font-size="22">{subtitle}</text>
+</svg>"""
+
+
+def write_media_plan_markdown(path: Path, assets: list[dict[str, Any]]) -> None:
+    lines = ["# Media Plan", ""]
+    for asset in assets:
+        lines.extend(
+            [
+                f"## {asset['title']}",
+                "",
+                f"- Page: `{asset['page']}`",
+                f"- Slot: `{asset['slot']}`",
+                f"- File: `{asset['path']}`",
+                f"- Alt text: {asset['altText']}",
+                f"- Prompt: {asset['prompt']}",
+                "",
+            ]
+        )
+    write_text(path, "\n".join(lines))
+
+
+def media_apply(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    manifest = load_media_manifest(project_dir, args.manifest)
+    if not manifest:
+        return {"ok": False, "error": "No media assets found. Run media-plan first."}
+    platform = detect_platform(project_dir)
+    changed: list[str] = []
+    if platform != "static":
+        return {"ok": False, "error": "media-apply currently supports generated static HTML projects."}
+    for asset in manifest:
+        if asset.get("slot") != "hero":
+            continue
+        page_path = project_dir / ("index.html" if asset.get("page") == "home" else f"{asset.get('page')}.html")
+        if not page_path.exists():
+            continue
+        html = page_path.read_text(encoding="utf-8")
+        if f'src="{asset.get("path")}"' in html:
+            continue
+        figure = (
+            f'\n          <figure class="media-figure">'
+            f'<img src="{escape_html(str(asset.get("path")))}" alt="{escape_html(str(asset.get("altText")))}" />'
+            "</figure>"
+        )
+        updated = re.sub(r"(</div>\s*</section>)", figure + r"\n        \1", html, count=1)
+        if updated != html:
+            page_path.write_text(updated, encoding="utf-8")
+            changed.append(str(page_path.relative_to(project_dir)))
+    if changed:
+        ensure_media_css(project_dir / "styles.css")
+    record_media(project_dir, {"type": "media-apply", "files": changed})
+    return {"ok": True, "projectDir": str(project_dir), "files": changed, "statePath": str(project_dir / STATE_PATH)}
+
+
+def load_media_manifest(project_dir: Path, manifest: str) -> list[dict[str, Any]]:
+    path = Path(manifest).expanduser() if manifest else project_dir / "docs" / "media-plan.json"
+    if not path.is_absolute():
+        path = project_dir / path
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assets = payload.get("assets") if isinstance(payload, dict) else None
+    return assets if isinstance(assets, list) else []
+
+
+def ensure_media_css(css_path: Path) -> None:
+    css = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
+    if ".media-figure" in css:
+        return
+    css_path.write_text(
+        css.rstrip()
+        + """
+
+.media-figure {
+  margin: 28px 0 0;
+}
+
+.media-figure img {
+  display: block;
+  width: min(100%, 760px);
+  height: auto;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+}
+""",
+        encoding="utf-8",
+    )
+
+
+def media_add(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    source = Path(args.file).expanduser().resolve()
+    if not source.exists() or not source.is_file():
+        return {"ok": False, "error": f"asset file does not exist: {source}"}
+    filename = args.filename or f"{slugify(args.title or source.stem, fallback='asset')}{source.suffix.lower()}"
+    dest = project_dir / MEDIA_DIR / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
+    asset = {
+        "id": slugify(args.asset_id or Path(filename).stem, fallback="asset"),
+        "page": args.page or "home",
+        "slot": args.slot or "supporting",
+        "title": args.title or Path(filename).stem.replace("-", " ").title(),
+        "filename": filename,
+        "path": str(dest.relative_to(project_dir)),
+        "altText": args.alt_text,
+        "prompt": "",
+        "status": "provided",
+    }
+    upsert_media_asset(project_dir, asset)
+    return {"ok": True, "projectDir": str(project_dir), "asset": asset, "statePath": str(project_dir / STATE_PATH)}
+
+
+def wordpress_media_upload(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    manifest = load_media_manifest(project_dir, args.manifest)
+    if args.asset_id:
+        manifest = [asset for asset in manifest if asset.get("id") == args.asset_id]
+    uploads = []
+    for asset in manifest:
+        source_url = args.url or asset.get("sourceUrl") or asset.get("publicUrl")
+        if not source_url:
+            uploads.append({"ok": False, "assetId": asset.get("id"), "error": "asset has no public URL for WordPress upload"})
+            continue
+        result = call_wordpress_mcp_tool(
+            args.mcp_url or os.getenv("WORDPRESS_MCP_URL", os.getenv("HERMES_WORDPRESS_MCP_URL", "")),
+            args.mcp_token or os.getenv("WORDPRESS_MCP_TOKEN", os.getenv("HERMES_WORDPRESS_MCP_TOKEN", "")),
+            "upload_media_from_url",
+            {"url": source_url, "title": asset.get("title", ""), "alt_text": asset.get("altText", "")},
+        )
+        result["assetId"] = asset.get("id")
+        result["ok"] = True
+        uploads.append(result)
+    record_media(project_dir, {"type": "wordpress-media-upload", "uploads": uploads})
+    return {"ok": all(item.get("ok") for item in uploads), "projectDir": str(project_dir), "uploads": uploads}
+
+
 def pages_from_state(project_dir: Path, state: dict[str, Any], spec: SiteSpec) -> list[PageSpec]:
     raw_pages = state.get("pages", [])
     pages: list[PageSpec] = []
@@ -3034,6 +3257,34 @@ def record_pages(project_dir: Path, pages: list[PageSpec], event: dict[str, Any]
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_media(project_dir: Path, event: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    events = state.setdefault("mediaEvents", [])
+    record = dict(event)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    events.append(record)
+    state["lastMedia"] = record
+    if event.get("assets"):
+        state["mediaAssets"] = event["assets"]
+    write_text(state_file, json.dumps(state, indent=2))
+
+
+def upsert_media_asset(project_dir: Path, asset: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    assets = state.setdefault("mediaAssets", [])
+    if not isinstance(assets, list):
+        assets = []
+    assets = [item for item in assets if not isinstance(item, dict) or item.get("id") != asset.get("id")]
+    assets.append(asset)
+    state["mediaAssets"] = assets
+    event = {"type": "media-add", "asset": asset, "createdAt": datetime.now(timezone.utc).isoformat()}
+    state.setdefault("mediaEvents", []).append(event)
+    state["lastMedia"] = event
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def record_qa(project_dir: Path, report: dict[str, Any]) -> None:
     state_file = project_dir / STATE_PATH
     state = read_state(state_file)
@@ -3226,6 +3477,39 @@ def build_parser() -> argparse.ArgumentParser:
     add_page_parser.add_argument("--description", default="", help="Page meta description and hero copy.")
     add_page_parser.add_argument("--goal", default="", help="Page CTA or conversion goal.")
     add_page_parser.set_defaults(func=add_page)
+
+    media_plan_parser = subparsers.add_parser("media-plan", help="Create a page-by-page media plan with alt text and placeholders.")
+    media_plan_parser.add_argument("--project-dir", default=".", help="Website project directory.")
+    media_plan_parser.add_argument("--pages", default="", help="Optional comma-separated page slugs to plan.")
+    media_plan_parser.add_argument("--style", default="professional editorial", help="Image style prompt.")
+    media_plan_parser.add_argument("--per-page", type=int, default=1, help="Assets to plan per page.")
+    media_plan_parser.add_argument("--no-placeholders", dest="placeholders", action="store_false", help="Do not create local SVG placeholders.")
+    media_plan_parser.set_defaults(func=media_plan, placeholders=True)
+
+    media_apply_parser = subparsers.add_parser("media-apply", help="Apply planned hero media to generated static pages.")
+    media_apply_parser.add_argument("--project-dir", default=".", help="Website project directory.")
+    media_apply_parser.add_argument("--manifest", default="", help="Media manifest path, defaults to docs/media-plan.json.")
+    media_apply_parser.set_defaults(func=media_apply)
+
+    media_add_parser = subparsers.add_parser("media-add", help="Copy a provided media file into the project and record metadata.")
+    media_add_parser.add_argument("--project-dir", default=".", help="Website project directory.")
+    media_add_parser.add_argument("--file", required=True, help="Local media file to copy into assets/images.")
+    media_add_parser.add_argument("--asset-id", default="", help="Stable asset ID.")
+    media_add_parser.add_argument("--filename", default="", help="Destination filename.")
+    media_add_parser.add_argument("--page", default="home", help="Page slug.")
+    media_add_parser.add_argument("--slot", default="supporting", help="Asset slot, such as hero or supporting.")
+    media_add_parser.add_argument("--title", default="", help="Asset title.")
+    media_add_parser.add_argument("--alt-text", default="", help="Accessible alt text.")
+    media_add_parser.set_defaults(func=media_add)
+
+    wp_media_parser = subparsers.add_parser("wordpress-media-upload", help="Upload public media URLs to WordPress through Hermes MCP.")
+    wp_media_parser.add_argument("--project-dir", default=".", help="Website project directory.")
+    wp_media_parser.add_argument("--manifest", default="", help="Media manifest path, defaults to docs/media-plan.json.")
+    wp_media_parser.add_argument("--asset-id", default="", help="Only upload one asset ID.")
+    wp_media_parser.add_argument("--url", default="", help="Public URL override for the selected asset.")
+    wp_media_parser.add_argument("--mcp-url", default=os.getenv("WORDPRESS_MCP_URL", os.getenv("HERMES_WORDPRESS_MCP_URL", "")))
+    wp_media_parser.add_argument("--mcp-token", default=os.getenv("WORDPRESS_MCP_TOKEN", os.getenv("HERMES_WORDPRESS_MCP_TOKEN", "")))
+    wp_media_parser.set_defaults(func=wordpress_media_upload)
 
     wp_package = subparsers.add_parser("wordpress-package", help="Create a WordPress-ready draft package.")
     wp_package.add_argument("--project-dir", default=".", help="Website project directory.")

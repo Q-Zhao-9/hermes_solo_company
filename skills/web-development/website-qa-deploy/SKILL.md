@@ -94,6 +94,8 @@ publish/deploy while the latest matching decision is `revision_requested` or
 
 - preview proposed page/post with `wordpress_preview_publish` before publishing
 - verify target site, page/post ID, slug, and status
+- upload approved public media URLs with `wordpress-media-upload` when WordPress
+  pages need media library assets
 - check plugin dependencies for forms, SEO, WooCommerce, security, backup
 - prefer draft/staging updates before production
 

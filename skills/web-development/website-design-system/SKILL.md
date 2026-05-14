@@ -44,6 +44,13 @@ docs/design-system.md
 - For landing pages, make the product/service obvious in the first viewport.
 - Use real assets, generated images, or relevant placeholders with clear alt
   text when visuals matter.
+- For generated agency projects, plan and track media with:
+
+  ```bash
+  scripts/website_agency.py media-plan --project-dir "<project dir>" --style "<image style>"
+  scripts/website_agency.py media-apply --project-dir "<project dir>"
+  ```
+
 - Keep text readable on mobile; never let labels or buttons overflow.
 - Use consistent buttons, cards, forms, nav, footer, FAQ, pricing, testimonial,
   and contact components.

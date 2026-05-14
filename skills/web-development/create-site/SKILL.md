@@ -38,6 +38,13 @@ new website from a business idea.
    scripts/website_agency.py preview-share --project-dir "<project dir>" --prefer hermesproxy
    ```
 
+7. When visuals are needed, plan and apply media assets:
+
+   ```bash
+   scripts/website_agency.py media-plan --project-dir "<project dir>"
+   scripts/website_agency.py media-apply --project-dir "<project dir>"
+   ```
+
 Default to a professional Next.js site for custom business/product websites,
 static HTML for a quick class/demo landing page, WordPress for editable content
 sites, and Shopify for ecommerce.

@@ -216,6 +216,159 @@ def test_add_page_updates_static_navigation_and_state(tmp_path):
     assert [page["slug"] for page in state["pages"]] == ["home", "contact", "pricing"]
 
 
+def test_media_plan_creates_manifest_placeholders_and_history(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--pages",
+        "home,about",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(result["projectDir"])
+
+    plan = run_script("media-plan", "--project-dir", str(project_dir), "--style", "bright clinical")
+
+    manifest = json.loads(Path(plan["manifestPath"]).read_text(encoding="utf-8"))
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert plan["ok"] is True
+    assert [asset["page"] for asset in plan["assets"]] == ["home", "about"]
+    assert (project_dir / "assets" / "images" / "home-hero.svg").exists()
+    assert "altText" in manifest["assets"][0]
+    assert state["lastMedia"]["type"] == "media-plan"
+
+
+def test_media_apply_inserts_static_images_with_alt_text(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--pages",
+        "home,about",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(result["projectDir"])
+    run_script("media-plan", "--project-dir", str(project_dir))
+
+    applied = run_script("media-apply", "--project-dir", str(project_dir))
+
+    index = (project_dir / "index.html").read_text(encoding="utf-8")
+    about = (project_dir / "about.html").read_text(encoding="utf-8")
+    css = (project_dir / "styles.css").read_text(encoding="utf-8")
+    assert applied["ok"] is True
+    assert "assets/images/home-hero.svg" in index
+    assert "assets/images/about-hero.svg" in about
+    assert 'alt="Acme Dental home visual for local families"' in index
+    assert ".media-figure" in css
+
+
+def test_media_add_copies_asset_and_records_metadata(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(result["projectDir"])
+    source = tmp_path / "source.svg"
+    source.write_text("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", encoding="utf-8")
+
+    added = run_script(
+        "media-add",
+        "--project-dir",
+        str(project_dir),
+        "--file",
+        str(source),
+        "--asset-id",
+        "team-photo",
+        "--filename",
+        "team-photo.svg",
+        "--alt-text",
+        "Acme Dental care team",
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert added["ok"] is True
+    assert (project_dir / "assets" / "images" / "team-photo.svg").exists()
+    assert state["mediaAssets"][0]["id"] == "team-photo"
+
+
+def test_wordpress_media_upload_calls_mcp(monkeypatch, tmp_path):
+    module = load_module()
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(result["projectDir"])
+    manifest = project_dir / "docs" / "media-plan.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "id": "home-hero",
+                        "title": "Home Hero",
+                        "altText": "Acme Dental homepage",
+                        "sourceUrl": "https://cdn.example/home.jpg",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_call(endpoint, api_token, name, arguments):
+        calls.append((endpoint, api_token, name, arguments))
+        return {"id": 100, "url": arguments["url"]}
+
+    monkeypatch.setattr(module, "call_wordpress_mcp_tool", fake_call)
+    upload = module.wordpress_media_upload(
+        argparse.Namespace(
+            project_dir=str(project_dir),
+            manifest=str(manifest),
+            asset_id="",
+            url="",
+            mcp_url="https://wp.example/wp-json/hermes-mcp/v1/mcp",
+            mcp_token="token",
+        )
+    )
+
+    assert upload["ok"] is True
+    assert calls[0][2] == "upload_media_from_url"
+    assert calls[0][3]["alt_text"] == "Acme Dental homepage"
+
+
 def test_create_nextjs_uses_saas_template_content(tmp_path):
     result = run_script(
         "create-site",

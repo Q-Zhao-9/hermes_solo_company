@@ -46,6 +46,8 @@ Hermes skills may use these deterministic helpers:
 scripts/website_agency.py create-site --name "Acme Dental" --description "Family dental clinic" --platform static --pages home,about,services,contact
 scripts/website_agency.py create-site --name "Acme Bistro" --description "Neighborhood restaurant with seasonal menu" --template restaurant
 scripts/website_agency.py add-page --project-dir generated-sites/acme-dental --title FAQ --page-type faq --description "Common questions from new patients"
+scripts/website_agency.py media-plan --project-dir generated-sites/acme-dental --style "bright clinical"
+scripts/website_agency.py media-apply --project-dir generated-sites/acme-dental
 scripts/website_agency.py preview-share --project-dir generated-sites/acme-dental --prefer hermesproxy
 scripts/website_agency.py list-sections --project-dir generated-sites/acme-dental
 scripts/website_agency.py edit-section --project-dir generated-sites/acme-dental --section top --heading "Premium dental care"
@@ -84,6 +86,7 @@ This records:
 
 - project creation
 - generated pages and page additions
+- media plans, alt text, and asset additions
 - preview links
 - QA reports
 - visual QA reports
@@ -104,6 +107,27 @@ Add a page later and update navigation/history:
 
 ```bash
 scripts/website_agency.py add-page --project-dir generated-sites/acme-dental --title Pricing --page-type pricing --description "Simple package options" --goal "Request pricing"
+```
+
+## Media Assets
+
+Create a page-by-page media plan with accessible alt text and local placeholders:
+
+```bash
+scripts/website_agency.py media-plan --project-dir generated-sites/acme-dental --style "bright clinical"
+scripts/website_agency.py media-apply --project-dir generated-sites/acme-dental
+```
+
+Record a real asset supplied by the user:
+
+```bash
+scripts/website_agency.py media-add --project-dir generated-sites/acme-dental --file /path/to/photo.jpg --page home --slot hero --alt-text "Dental team welcoming a family"
+```
+
+For WordPress, upload public media URLs through the Hermes MCP WordPress plugin:
+
+```bash
+scripts/website_agency.py wordpress-media-upload --project-dir generated-sites/acme-dental --asset-id home-hero
 ```
 
 ## Approval Workflow
