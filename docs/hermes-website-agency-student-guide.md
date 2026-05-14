@@ -43,8 +43,9 @@ Prepare deployment or export:
 Hermes skills may use these deterministic helpers:
 
 ```bash
-scripts/website_agency.py create-site --name "Acme Dental" --description "Family dental clinic" --platform static
+scripts/website_agency.py create-site --name "Acme Dental" --description "Family dental clinic" --platform static --pages home,about,services,contact
 scripts/website_agency.py create-site --name "Acme Bistro" --description "Neighborhood restaurant with seasonal menu" --template restaurant
+scripts/website_agency.py add-page --project-dir generated-sites/acme-dental --title FAQ --page-type faq --description "Common questions from new patients"
 scripts/website_agency.py preview-share --project-dir generated-sites/acme-dental --prefer hermesproxy
 scripts/website_agency.py list-sections --project-dir generated-sites/acme-dental
 scripts/website_agency.py edit-section --project-dir generated-sites/acme-dental --section top --heading "Premium dental care"
@@ -82,6 +83,7 @@ docs/hermes-website-state.json
 This records:
 
 - project creation
+- generated pages and page additions
 - preview links
 - QA reports
 - visual QA reports
@@ -89,6 +91,20 @@ This records:
 - deployment preparation
 - WordPress package and preview events
 - approval requests and decisions
+
+## Multi-Page Sites
+
+Generate common site pages during creation:
+
+```bash
+scripts/website_agency.py create-site --name "Acme Dental" --description "Family dental clinic" --platform static --pages home,about,services,contact,faq
+```
+
+Add a page later and update navigation/history:
+
+```bash
+scripts/website_agency.py add-page --project-dir generated-sites/acme-dental --title Pricing --page-type pricing --description "Simple package options" --goal "Request pricing"
+```
 
 ## Approval Workflow
 

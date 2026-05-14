@@ -106,6 +106,13 @@ Plan:
 4. QA and preview
 ```
 
+For multi-page generated projects, use:
+
+```bash
+scripts/website_agency.py create-site --name "<site>" --description "<business>" --pages home,about,services,contact
+scripts/website_agency.py add-page --project-dir "<project dir>" --title FAQ --page-type faq --description "<page purpose>"
+```
+
 After implementation, return:
 
 - changed files or project path

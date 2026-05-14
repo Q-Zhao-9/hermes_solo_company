@@ -138,6 +138,84 @@ def test_create_site_explicit_portfolio_template(tmp_path):
     assert "Case studies" in html
 
 
+def test_create_static_site_with_multiple_pages(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--pages",
+        "home,about,services,contact,faq",
+        "--output-dir",
+        str(tmp_path),
+    )
+
+    project_dir = Path(result["projectDir"])
+    index = (project_dir / "index.html").read_text(encoding="utf-8")
+    about = (project_dir / "about.html").read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    sitemap = (project_dir / "docs" / "sitemap.md").read_text(encoding="utf-8")
+    assert result["ok"] is True
+    assert (project_dir / "services.html").exists()
+    assert (project_dir / "contact.html").exists()
+    assert (project_dir / "faq.html").exists()
+    assert 'href="about.html"' in index
+    assert "About Acme Dental" in about
+    assert [page["slug"] for page in state["pages"]] == ["home", "about", "services", "contact", "faq"]
+    assert "- FAQ:" in sitemap
+
+
+def test_add_page_updates_static_navigation_and_state(tmp_path):
+    result = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--pages",
+        "home,contact",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(result["projectDir"])
+
+    added = run_script(
+        "add-page",
+        "--project-dir",
+        str(project_dir),
+        "--title",
+        "Pricing",
+        "--page-type",
+        "pricing",
+        "--description",
+        "Simple package options for families.",
+        "--goal",
+        "Request pricing",
+    )
+
+    index = (project_dir / "index.html").read_text(encoding="utf-8")
+    pricing = (project_dir / "pricing.html").read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert added["ok"] is True
+    assert 'href="pricing.html"' in index
+    assert "Simple package options for families." in pricing
+    assert state["lastPage"]["type"] == "add-page"
+    assert [page["slug"] for page in state["pages"]] == ["home", "contact", "pricing"]
+
+
 def test_create_nextjs_uses_saas_template_content(tmp_path):
     result = run_script(
         "create-site",

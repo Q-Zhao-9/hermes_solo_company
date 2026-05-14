@@ -44,6 +44,15 @@ class SiteSpec:
     slug: str
 
 
+@dataclass(frozen=True)
+class PageSpec:
+    title: str
+    slug: str
+    page_type: str
+    goal: str
+    description: str
+
+
 def slugify(value: str, fallback: str = "website") -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     slug = re.sub(r"-{2,}", "-", slug)
@@ -217,8 +226,11 @@ def create_site(args: argparse.Namespace) -> dict[str, Any]:
         write_nextjs_project(root, spec)
     else:
         write_static_project(root, spec)
+    pages = parse_page_specs(args.pages, spec)
+    if len(pages) > 1:
+        write_site_pages(root, spec, pages)
 
-    record_project_created(root, spec)
+    record_project_created(root, spec, pages)
     preview = preview_plan(root, port=args.port)
     return {
         "ok": True,
@@ -234,6 +246,71 @@ def create_site(args: argparse.Namespace) -> dict[str, Any]:
             "Use the preview URL to review the first draft.",
         ],
     }
+
+
+def parse_page_specs(value: str, spec: SiteSpec) -> list[PageSpec]:
+    requested = [item.strip() for item in (value or "home").split(",") if item.strip()]
+    if not requested:
+        requested = ["home"]
+    pages: list[PageSpec] = []
+    seen: set[str] = set()
+    for raw in requested:
+        page_type = slugify(raw, fallback="page")
+        if page_type in seen:
+            continue
+        seen.add(page_type)
+        pages.append(default_page_spec(page_type, spec))
+    if not any(page.slug == "home" for page in pages):
+        pages.insert(0, default_page_spec("home", spec))
+    return pages
+
+
+def default_page_spec(page_type: str, spec: SiteSpec) -> PageSpec:
+    normalized = slugify(page_type, fallback="page")
+    titles = {
+        "home": "Home",
+        "about": "About",
+        "services": "Services",
+        "service": "Services",
+        "contact": "Contact",
+        "faq": "FAQ",
+        "pricing": "Pricing",
+        "blog": "Blog",
+        "products": "Products",
+        "product": "Products",
+    }
+    goals = {
+        "home": spec.goal,
+        "about": "Build trust with the team and story",
+        "services": "Help visitors choose the right service",
+        "service": "Help visitors choose the right service",
+        "contact": "Make it easy to start a conversation",
+        "faq": "Answer common buying questions",
+        "pricing": "Help visitors understand package fit",
+        "blog": "Educate visitors and support search intent",
+        "products": "Help visitors compare products",
+        "product": "Help visitors compare products",
+    }
+    descriptions = {
+        "home": spec.description,
+        "about": f"{spec.name} explains its mission, proof, and approach for {spec.audience}.",
+        "services": f"{spec.name} presents clear service options for {spec.audience}.",
+        "service": f"{spec.name} presents clear service options for {spec.audience}.",
+        "contact": f"{spec.name} gives {spec.audience} a direct path to {spec.goal}.",
+        "faq": f"{spec.name} answers the questions {spec.audience} ask before taking action.",
+        "pricing": f"{spec.name} explains packages, value, and next steps for {spec.audience}.",
+        "blog": f"{spec.name} shares practical guidance for {spec.audience}.",
+        "products": f"{spec.name} organizes product choices for {spec.audience}.",
+        "product": f"{spec.name} organizes product choices for {spec.audience}.",
+    }
+    title = titles.get(normalized, normalized.replace("-", " ").title())
+    return PageSpec(
+        title=title,
+        slug="home" if normalized == "home" else normalized,
+        page_type=normalized,
+        goal=goals.get(normalized, spec.goal),
+        description=descriptions.get(normalized, f"{spec.name} {title.lower()} page for {spec.audience}."),
+    )
 
 
 def write_project_docs(root: Path, spec: SiteSpec) -> None:
@@ -595,6 +672,259 @@ ol {
 }
 """,
     )
+
+
+def write_site_pages(root: Path, spec: SiteSpec, pages: list[PageSpec]) -> None:
+    if detect_platform(root) == "nextjs":
+        write_nextjs_pages(root, spec, pages)
+        return
+    write_static_pages(root, spec, pages)
+
+
+def write_static_pages(root: Path, spec: SiteSpec, pages: list[PageSpec]) -> None:
+    for page in pages:
+        path = static_page_path(root, page)
+        write_text(path, render_static_page(spec, page, pages))
+    write_text(root / "docs" / "sitemap.md", render_sitemap(pages))
+
+
+def static_page_path(root: Path, page: PageSpec) -> Path:
+    return root / "index.html" if page.slug == "home" else root / f"{page.slug}.html"
+
+
+def render_static_page(spec: SiteSpec, page: PageSpec, pages: list[PageSpec]) -> str:
+    profile = template_profile(spec)
+    nav = "\n        ".join(
+        f'<a href="{escape_html(page_href(item))}">{escape_html(item.title)}</a>' for item in pages[:6]
+    )
+    page_body = page_sections(spec, page, profile, pages)
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escape_html(page.title)} | {escape_html(spec.name)}</title>
+    <meta name="description" content="{escape_html(page.description[:150])}" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="index.html">{escape_html(spec.name)}</a>
+      <nav aria-label="Primary navigation">
+        {nav}
+      </nav>
+    </header>
+
+    <main id="top">
+{page_body}
+    </main>
+  </body>
+</html>
+"""
+
+
+def page_href(page: PageSpec) -> str:
+    return "index.html" if page.slug == "home" else f"{page.slug}.html"
+
+
+def page_sections(spec: SiteSpec, page: PageSpec, profile: dict[str, Any], pages: list[PageSpec]) -> str:
+    if page.slug == "home":
+        cards = profile["cards"]
+        proof = profile["proof"]
+        process = profile["process"]
+        return f"""      <section class="hero">
+        <div>
+          <p class="eyebrow">{escape_html(profile["eyebrow"])}</p>
+          <h1>{escape_html(profile["hero"])}</h1>
+          <p>{escape_html(spec.description)}</p>
+          <a class="button" href="{escape_html(contact_href(pages))}">{escape_html(spec.goal)}</a>
+        </div>
+      </section>
+
+      <section class="proof" aria-label="Key strengths">
+        <span>{escape_html(proof[0])}</span>
+        <span>{escape_html(proof[1])}</span>
+        <span>{escape_html(proof[2])}</span>
+      </section>
+
+      <section id="services" class="section">
+        <p class="eyebrow">{escape_html(profile["section_eyebrow"])}</p>
+        <h2>{escape_html(profile["section_heading"])}</h2>
+        <div class="grid">
+          <article><h3>{escape_html(cards[0][0])}</h3><p>{escape_html(cards[0][1])}</p></article>
+          <article><h3>{escape_html(cards[1][0])}</h3><p>{escape_html(cards[1][1])}</p></article>
+          <article><h3>{escape_html(cards[2][0])}</h3><p>{escape_html(cards[2][1])}</p></article>
+        </div>
+      </section>
+
+      <section id="process" class="section band">
+        <p class="eyebrow">Process</p>
+        <h2>A simple path from idea to preview</h2>
+        <ol>
+          <li>{escape_html(process[0])}</li>
+          <li>{escape_html(process[1])}</li>
+          <li>{escape_html(process[2])}</li>
+        </ol>
+      </section>
+
+      <section id="contact" class="section cta">
+        <p class="eyebrow">Next step</p>
+        <h2>{escape_html(profile["final_heading"])}</h2>
+        <p>Use this draft as the starting point for edits, preview, and deployment.</p>
+        <a class="button" href="mailto:hello@example.com">Contact us</a>
+      </section>"""
+
+    cards = page_cards(page)
+    return f"""      <section class="hero page-hero">
+        <div>
+          <p class="eyebrow">{escape_html(page.title)}</p>
+          <h1>{escape_html(page_heading(spec, page))}</h1>
+          <p>{escape_html(page.description)}</p>
+        <a class="button" href="{escape_html(contact_href(pages))}">{escape_html(page.goal)}</a>
+        </div>
+      </section>
+
+      <section class="section">
+        <p class="eyebrow">What to know</p>
+        <h2>{escape_html(page_subheading(page))}</h2>
+        <div class="grid">
+          <article><h3>{escape_html(cards[0][0])}</h3><p>{escape_html(cards[0][1])}</p></article>
+          <article><h3>{escape_html(cards[1][0])}</h3><p>{escape_html(cards[1][1])}</p></article>
+          <article><h3>{escape_html(cards[2][0])}</h3><p>{escape_html(cards[2][1])}</p></article>
+        </div>
+      </section>
+
+      <section class="section cta">
+        <p class="eyebrow">Next step</p>
+        <h2>{escape_html(page.goal)}</h2>
+        <p>Use this page as a structured first draft for review, edits, and approval.</p>
+        <a class="button" href="mailto:hello@example.com">Contact us</a>
+      </section>"""
+
+
+def contact_href(pages: list[PageSpec]) -> str:
+    return "contact.html" if any(page.slug == "contact" for page in pages) else "mailto:hello@example.com"
+
+
+def page_heading(spec: SiteSpec, page: PageSpec) -> str:
+    if page.page_type == "about":
+        return f"About {spec.name}"
+    if page.page_type in {"services", "service"}:
+        return f"Services for {spec.audience}"
+    if page.page_type == "contact":
+        return f"Contact {spec.name}"
+    if page.page_type == "faq":
+        return "Questions, answered clearly"
+    return f"{page.title} for {spec.audience}"
+
+
+def page_subheading(page: PageSpec) -> str:
+    mapping = {
+        "about": "A clearer story, proof, and reason to choose the team",
+        "services": "Organized options with practical next steps",
+        "service": "Organized options with practical next steps",
+        "contact": "Simple ways to reach the team",
+        "faq": "Answers that reduce friction before conversion",
+        "pricing": "Packages, value, and fit",
+        "blog": "Useful ideas and search-friendly topics",
+    }
+    return mapping.get(page.page_type, "Focused content for this page")
+
+
+def page_cards(page: PageSpec) -> list[tuple[str, str]]:
+    mapping = {
+        "about": [
+            ("Positioning", "Explain who the business serves and why the work matters."),
+            ("Proof", "Show credentials, outcomes, experience, and local trust signals."),
+            ("Approach", "Describe how the team works with customers from first contact to follow-through."),
+        ],
+        "services": [
+            ("Core service", "Describe the primary offer and the problem it solves."),
+            ("Service fit", "Clarify who this is for and what outcomes they can expect."),
+            ("Next action", "Make the consultation, quote, booking, or purchase path obvious."),
+        ],
+        "contact": [
+            ("Fast response", "Set expectations for replies, scheduling, and intake details."),
+            ("Useful details", "Ask for the information needed to route the request well."),
+            ("Clear handoff", "Confirm what happens after the visitor reaches out."),
+        ],
+        "faq": [
+            ("Buying questions", "Answer cost, timing, process, and fit questions plainly."),
+            ("Trust questions", "Address proof, guarantees, credentials, and support."),
+            ("Next questions", "Invite visitors to ask what was not covered."),
+        ],
+    }
+    return mapping.get(page.page_type, mapping["services"])
+
+
+def render_sitemap(pages: list[PageSpec]) -> str:
+    lines = ["# Sitemap", ""]
+    for page in pages:
+        lines.append(f"- {page.title}: {page.description}")
+    lines.extend(["", "Generated pages are tracked in `docs/hermes-website-state.json`."])
+    return "\n".join(lines)
+
+
+def write_nextjs_pages(root: Path, spec: SiteSpec, pages: list[PageSpec]) -> None:
+    for page in pages:
+        if page.slug == "home":
+            continue
+        write_text(root / "app" / page.slug / "page.tsx", render_nextjs_page(spec, page))
+    update_nextjs_home_navigation(root, pages)
+    write_text(root / "docs" / "sitemap.md", render_sitemap(pages))
+
+
+def update_nextjs_home_navigation(root: Path, pages: list[PageSpec]) -> None:
+    page_path = root / "app" / "page.tsx"
+    if not page_path.exists():
+        return
+    nav = "\n          ".join(
+        f'<a href="{"/" if page.slug == "home" else "/" + page.slug}">{escape_js(page.title)}</a>' for page in pages[:6]
+    )
+    text = page_path.read_text(encoding="utf-8")
+    updated = re.sub(
+        r'(<nav aria-label="Primary navigation">\n)(.*?)(\n        </nav>)',
+        rf"\1          {nav}\3",
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    page_path.write_text(updated, encoding="utf-8")
+
+
+def render_nextjs_page(spec: SiteSpec, page: PageSpec) -> str:
+    cards = page_cards(page)
+    return f"""export default function {page.slug.title().replace("-", "")}Page() {{
+  return (
+    <main>
+      <header className="siteHeader">
+        <a className="brand" href="/">{escape_js(spec.name)}</a>
+        <nav aria-label="Primary navigation">
+          <a href="/">Home</a>
+          <a href="/services">Services</a>
+          <a href="/about">About</a>
+          <a href="/contact">Contact</a>
+        </nav>
+      </header>
+      <section className="hero">
+        <p className="eyebrow">{escape_js(page.title)}</p>
+        <h1>{escape_js(page_heading(spec, page))}</h1>
+        <p>{escape_js(page.description)}</p>
+        <a className="button" href="/contact">{escape_js(page.goal)}</a>
+      </section>
+      <section className="section">
+        <p className="eyebrow">What to know</p>
+        <h2>{escape_js(page_subheading(page))}</h2>
+        <div className="grid">
+          <article><h3>{escape_js(cards[0][0])}</h3><p>{escape_js(cards[0][1])}</p></article>
+          <article><h3>{escape_js(cards[1][0])}</h3><p>{escape_js(cards[1][1])}</p></article>
+          <article><h3>{escape_js(cards[2][0])}</h3><p>{escape_js(cards[2][1])}</p></article>
+        </div>
+      </section>
+    </main>
+  );
+}}
+"""
 
 
 def write_nextjs_project(root: Path, spec: SiteSpec) -> None:
@@ -1260,6 +1590,72 @@ def deploy_prep(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     return result
+
+
+def add_page(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    spec = SiteSpec(
+        name=str(project.get("name") or project_dir.name.replace("-", " ").title()),
+        description=str(project.get("description") or args.description or f"{args.title} page."),
+        audience=str(project.get("audience") or "target customers"),
+        goal=str(project.get("goal") or args.goal or "Contact us"),
+        tone=str(project.get("tone") or "professional"),
+        platform=detect_platform(project_dir),
+        template=str(project.get("template") or "local-service"),
+        slug=str(project.get("slug") or project_dir.name),
+    )
+    page = PageSpec(
+        title=args.title.strip(),
+        slug=slugify(args.slug or args.title, fallback="page"),
+        page_type=slugify(args.page_type or args.title, fallback="page"),
+        goal=args.goal or default_page_spec(args.page_type or args.title, spec).goal,
+        description=args.description or default_page_spec(args.page_type or args.title, spec).description,
+    )
+    existing_pages = pages_from_state(project_dir, state, spec)
+    pages = [item for item in existing_pages if item.slug != page.slug]
+    pages.append(page)
+    write_site_pages(project_dir, spec, pages)
+    record_pages(project_dir, pages, {"type": "add-page", "page": page.__dict__})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "page": page.__dict__,
+        "path": str((project_dir / ("index.html" if page.slug == "home" else f"{page.slug}.html")) if spec.platform == "static" else (project_dir / "app" / page.slug / "page.tsx")),
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def pages_from_state(project_dir: Path, state: dict[str, Any], spec: SiteSpec) -> list[PageSpec]:
+    raw_pages = state.get("pages", [])
+    pages: list[PageSpec] = []
+    if isinstance(raw_pages, list):
+        for item in raw_pages:
+            if not isinstance(item, dict):
+                continue
+            pages.append(
+                PageSpec(
+                    title=str(item.get("title") or "Page"),
+                    slug=str(item.get("slug") or slugify(str(item.get("title") or "page"))),
+                    page_type=str(item.get("page_type") or item.get("pageType") or item.get("slug") or "page"),
+                    goal=str(item.get("goal") or spec.goal),
+                    description=str(item.get("description") or ""),
+                )
+            )
+    if not pages:
+        pages = [default_page_spec("home", spec)]
+        if (project_dir / "about.html").exists():
+            pages.append(default_page_spec("about", spec))
+        if (project_dir / "services.html").exists():
+            pages.append(default_page_spec("services", spec))
+        if (project_dir / "contact.html").exists():
+            pages.append(default_page_spec("contact", spec))
+    if not any(page.slug == "home" for page in pages):
+        pages.insert(0, default_page_spec("home", spec))
+    return pages
 
 
 def wordpress_package(args: argparse.Namespace) -> dict[str, Any]:
@@ -2605,7 +3001,7 @@ def record_preview(project_dir: Path, preview: dict[str, Any], attempts: list[di
     write_text(state_file, json.dumps(state, indent=2))
 
 
-def record_project_created(project_dir: Path, spec: SiteSpec) -> None:
+def record_project_created(project_dir: Path, spec: SiteSpec, pages: list[PageSpec] | None = None) -> None:
     state_file = project_dir / STATE_PATH
     state = read_state(state_file)
     state["project"] = {
@@ -2620,6 +3016,21 @@ def record_project_created(project_dir: Path, spec: SiteSpec) -> None:
         "createdAt": state.get("project", {}).get("createdAt") or datetime.now(timezone.utc).isoformat(),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
+    if pages:
+        state["pages"] = [page.__dict__ for page in pages]
+        state["lastPage"] = {"type": "create-site", "pages": [page.__dict__ for page in pages]}
+    write_text(state_file, json.dumps(state, indent=2))
+
+
+def record_pages(project_dir: Path, pages: list[PageSpec], event: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    state["pages"] = [page.__dict__ for page in pages]
+    events = state.setdefault("pageEvents", [])
+    record = dict(event)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    events.append(record)
+    state["lastPage"] = record
     write_text(state_file, json.dumps(state, indent=2))
 
 
@@ -2787,6 +3198,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--output-dir", default="generated-sites", help="Directory where the site folder is created.")
     create.add_argument("--port", type=int, default=DEFAULT_PORT)
     create.add_argument("--force", action="store_true", help="Update files if the output project already exists.")
+    create.add_argument("--pages", default="home", help="Comma-separated pages to generate, for example home,about,services,contact.")
     create.set_defaults(func=create_site)
 
     preview = subparsers.add_parser("build-preview", help="Create or start a preview plan for a website project.")
@@ -2805,6 +3217,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deployment target to prepare.",
     )
     deploy.set_defaults(func=deploy_prep)
+
+    add_page_parser = subparsers.add_parser("add-page", help="Add a generated page and update site navigation/history.")
+    add_page_parser.add_argument("--project-dir", default=".", help="Website project directory.")
+    add_page_parser.add_argument("--title", required=True, help="Page title, such as About or Services.")
+    add_page_parser.add_argument("--slug", default="", help="Page slug. Defaults to title.")
+    add_page_parser.add_argument("--page-type", default="", help="Page type such as about, services, contact, faq, pricing, blog.")
+    add_page_parser.add_argument("--description", default="", help="Page meta description and hero copy.")
+    add_page_parser.add_argument("--goal", default="", help="Page CTA or conversion goal.")
+    add_page_parser.set_defaults(func=add_page)
 
     wp_package = subparsers.add_parser("wordpress-package", help="Create a WordPress-ready draft package.")
     wp_package.add_argument("--project-dir", default=".", help="Website project directory.")
