@@ -31,6 +31,7 @@ STATE_PATH = Path("docs") / "hermes-website-state.json"
 DEPLOY_DIR = Path("dist") / "hermes-deploy"
 WORDPRESS_DIR = Path("dist") / "hermes-wordpress"
 MEDIA_DIR = Path("assets") / "images"
+REVIEW_DIR = Path("dist") / "hermes-review"
 
 
 @dataclass(frozen=True)
@@ -1461,6 +1462,422 @@ def format_discord_summary(project_dir: Path, state: dict[str, Any]) -> str:
     lines.append("")
     lines.append("Next: run `/build-preview`, `/edit-section`, `/seo-optimize`, or `/deploy-site` as needed.")
     return "\n".join(lines)
+
+
+def review_build(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+
+    state = read_state(project_dir / STATE_PATH)
+    data = build_review_data(
+        project_dir,
+        state,
+        title=args.title,
+        public_preview_url=args.public_preview_url,
+        client_name=args.client_name,
+    )
+    review_dir = project_dir / REVIEW_DIR
+    review_dir.mkdir(parents=True, exist_ok=True)
+    dashboard_path = review_dir / "index.html"
+    client_path = review_dir / "client-review.html"
+    state_path = review_dir / "state.json"
+
+    write_text(dashboard_path, render_review_dashboard(data))
+    write_text(client_path, render_client_review(data))
+    write_text(state_path, json.dumps(data, indent=2))
+
+    event = {
+        "type": "review-build",
+        "dashboardPath": str(dashboard_path.relative_to(project_dir)),
+        "clientReviewPath": str(client_path.relative_to(project_dir)),
+        "statePath": str(state_path.relative_to(project_dir)),
+        "publicPreviewUrl": data.get("previewUrl", ""),
+        "clientName": data.get("clientName", ""),
+    }
+    record_review(project_dir, event)
+
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "dashboardPath": str(dashboard_path),
+        "clientReviewPath": str(client_path),
+        "reviewStatePath": str(state_path),
+        "message": "Review dashboard created. Share client-review.html with the client or expose it through Hermes proxy.",
+    }
+
+
+def review_comment(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    if not args.comment.strip() and args.decision == "comment":
+        return {"ok": False, "error": "comment is required when decision is comment"}
+
+    event = {
+        "type": "review-comment",
+        "page": args.page,
+        "author": args.author,
+        "comment": args.comment,
+        "decision": args.decision,
+    }
+    record_review(project_dir, event)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "comment": event,
+        "statePath": str(project_dir / STATE_PATH),
+        "message": f"Review feedback recorded: {args.decision}.",
+    }
+
+
+def build_review_data(
+    project_dir: Path,
+    state: dict[str, Any],
+    *,
+    title: str = "",
+    public_preview_url: str = "",
+    client_name: str = "",
+) -> dict[str, Any]:
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    pages = state.get("pages", []) if isinstance(state.get("pages"), list) else []
+    preview = state.get("lastPreview", {}) if isinstance(state.get("lastPreview"), dict) else {}
+    qa = state.get("lastQa", {}) if isinstance(state.get("lastQa"), dict) else {}
+    visual = state.get("lastVisualQa", {}) if isinstance(state.get("lastVisualQa"), dict) else {}
+    approval = state.get("lastApproval", {}) if isinstance(state.get("lastApproval"), dict) else {}
+    deployment = state.get("lastDeployment", {}) if isinstance(state.get("lastDeployment"), dict) else {}
+    wordpress = state.get("lastWordPress", {}) if isinstance(state.get("lastWordPress"), dict) else {}
+    media_assets = state.get("mediaAssets", []) if isinstance(state.get("mediaAssets"), list) else []
+    comments = state.get("reviewComments", []) if isinstance(state.get("reviewComments"), list) else []
+    workflow_state = str(state.get("workflowState") or "draft")
+    preview_url = public_preview_url or str(
+        preview.get("publicUrl") or preview.get("siteletUrl") or preview.get("generatedUrl") or preview.get("localUrl") or ""
+    )
+    project_name = str(project.get("name") or project_dir.name)
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "projectDir": str(project_dir),
+        "title": title or f"{project_name} Review",
+        "clientName": client_name,
+        "project": project,
+        "projectName": project_name,
+        "workflowState": workflow_state,
+        "previewUrl": preview_url,
+        "pages": pages,
+        "qa": qa,
+        "visualQa": visual,
+        "approval": approval,
+        "deployment": deployment,
+        "wordpress": wordpress,
+        "mediaAssets": media_assets,
+        "reviewComments": comments,
+        "activity": review_activity(state),
+    }
+
+
+def review_activity(state: dict[str, Any]) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+
+    def add(label: str, item: dict[str, Any], detail: str = "") -> None:
+        created_at = str(item.get("createdAt") or item.get("generatedAt") or "")
+        events.append({"label": label, "createdAt": created_at, "detail": detail})
+
+    for entry in state.get("previews", []) if isinstance(state.get("previews"), list) else []:
+        if isinstance(entry, dict):
+            preview = entry.get("preview", {}) if isinstance(entry.get("preview"), dict) else {}
+            add("Preview shared", entry, str(preview.get("publicUrl") or preview.get("localUrl") or preview.get("method") or ""))
+    for item in state.get("approvals", []) if isinstance(state.get("approvals"), list) else []:
+        if isinstance(item, dict):
+            add("Approval", item, f"{item.get('decision', 'pending')} - {item.get('target', 'project')}")
+    for item in state.get("revisions", []) if isinstance(state.get("revisions"), list) else []:
+        if isinstance(item, dict):
+            add("Revision", item, str(item.get("request") or item.get("type") or ""))
+    for item in state.get("deployments", []) if isinstance(state.get("deployments"), list) else []:
+        if isinstance(item, dict):
+            add("Deployment", item, str(item.get("target") or item.get("type") or ""))
+    for item in state.get("reviewComments", []) if isinstance(state.get("reviewComments"), list) else []:
+        if isinstance(item, dict):
+            add("Review feedback", item, f"{item.get('decision', 'comment')} - {item.get('page', 'project')}")
+
+    return sorted(events, key=lambda item: item.get("createdAt", ""), reverse=True)[:12]
+
+
+def render_review_dashboard(data: dict[str, Any]) -> str:
+    project = data.get("project", {}) if isinstance(data.get("project"), dict) else {}
+    pages = data.get("pages", []) if isinstance(data.get("pages"), list) else []
+    media_assets = data.get("mediaAssets", []) if isinstance(data.get("mediaAssets"), list) else []
+    activity = data.get("activity", []) if isinstance(data.get("activity"), list) else []
+    comments = data.get("reviewComments", []) if isinstance(data.get("reviewComments"), list) else []
+    qa = data.get("qa", {}) if isinstance(data.get("qa"), dict) else {}
+    visual = data.get("visualQa", {}) if isinstance(data.get("visualQa"), dict) else {}
+    approval = data.get("approval", {}) if isinstance(data.get("approval"), dict) else {}
+    deployment = data.get("deployment", {}) if isinstance(data.get("deployment"), dict) else {}
+    wordpress = data.get("wordpress", {}) if isinstance(data.get("wordpress"), dict) else {}
+    preview_url = str(data.get("previewUrl") or "")
+
+    page_rows = "\n".join(
+        f"<tr><td>{escape_html(str(page.get('title', page.get('slug', 'Page'))))}</td>"
+        f"<td>{escape_html(str(page.get('slug', '')))}</td>"
+        f"<td>{escape_html(str(page.get('goal', '')))}</td></tr>"
+        for page in pages
+        if isinstance(page, dict)
+    ) or '<tr><td colspan="3">No pages recorded yet.</td></tr>'
+    media_rows = "\n".join(
+        f"<tr><td>{escape_html(str(asset.get('title', asset.get('id', 'Asset'))))}</td>"
+        f"<td>{escape_html(str(asset.get('page', '')))}</td>"
+        f"<td>{escape_html(str(asset.get('altText', asset.get('alt_text', ''))))}</td></tr>"
+        for asset in media_assets
+        if isinstance(asset, dict)
+    ) or '<tr><td colspan="3">No media assets recorded yet.</td></tr>'
+    activity_items = "\n".join(
+        f"<li><strong>{escape_html(str(item.get('label', 'Event')))}</strong>"
+        f"<span>{escape_html(str(item.get('detail', '')))}</span>"
+        f"<time>{escape_html(str(item.get('createdAt', '')))}</time></li>"
+        for item in activity
+        if isinstance(item, dict)
+    ) or "<li><strong>No activity yet.</strong><span>Run preview, QA, edits, or approvals.</span></li>"
+    comment_items = render_comment_items(comments)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape_html(str(data.get('title') or 'Website Review Dashboard'))}</title>
+  {render_review_css()}
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Hermes Web Agency</p>
+      <h1>{escape_html(str(data.get('projectName') or 'Website Review'))}</h1>
+      <p>{escape_html(str(project.get('description') or 'Project review workspace'))}</p>
+    </div>
+    <div class="state">{escape_html(str(data.get('workflowState') or 'draft').replace('_', ' ').title())}</div>
+  </header>
+
+  <main>
+    <section class="grid metrics">
+      {metric_card('Preview', 'Ready' if preview_url else 'Missing', preview_url or 'Run preview-share or build-preview.')}
+      {metric_card('QA', qa_status_label(qa), qa_summary_text(qa))}
+      {metric_card('Visual QA', qa_status_label(visual), qa_summary_text(visual))}
+      {metric_card('Approval', str(approval.get('decision') or 'not requested').replace('_', ' ').title(), str(approval.get('target') or 'Project'))}
+    </section>
+
+    <section class="panel split">
+      <div>
+        <p class="eyebrow">Client Preview</p>
+        <h2>Shareable Review</h2>
+        <p>Use the client review page for approval conversations and the latest public preview URL.</p>
+      </div>
+      <div class="actions">
+        {review_link('Open Preview', preview_url)}
+        <a href="client-review.html">Open Client Review</a>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <p class="eyebrow">Pages</p>
+        <h2>Sitemap</h2>
+        <table><thead><tr><th>Page</th><th>Slug</th><th>Goal</th></tr></thead><tbody>{page_rows}</tbody></table>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Media</p>
+        <h2>Assets</h2>
+        <table><thead><tr><th>Asset</th><th>Page</th><th>Alt Text</th></tr></thead><tbody>{media_rows}</tbody></table>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <p class="eyebrow">Publishing</p>
+        <h2>Deploy + WordPress</h2>
+        <dl>
+          <div><dt>Deploy</dt><dd>{escape_html(str(deployment.get('target') or deployment.get('type') or 'Not prepared'))}</dd></div>
+          <div><dt>Artifact</dt><dd>{escape_html(str(deployment.get('artifact') or deployment.get('destination') or ''))}</dd></div>
+          <div><dt>WordPress</dt><dd>{escape_html(str(wordpress.get('type') or 'No WordPress event'))}</dd></div>
+        </dl>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Feedback</p>
+        <h2>Client Comments</h2>
+        <ul class="comments">{comment_items}</ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Timeline</p>
+      <h2>Recent Activity</h2>
+      <ul class="activity">{activity_items}</ul>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
+def render_client_review(data: dict[str, Any]) -> str:
+    project = data.get("project", {}) if isinstance(data.get("project"), dict) else {}
+    pages = data.get("pages", []) if isinstance(data.get("pages"), list) else []
+    comments = data.get("reviewComments", []) if isinstance(data.get("reviewComments"), list) else []
+    approval = data.get("approval", {}) if isinstance(data.get("approval"), dict) else {}
+    preview_url = str(data.get("previewUrl") or "")
+    page_items = "\n".join(
+        f"<li><strong>{escape_html(str(page.get('title', page.get('slug', 'Page'))))}</strong>"
+        f"<span>{escape_html(str(page.get('description') or page.get('goal') or 'Review content and layout.'))}</span></li>"
+        for page in pages
+        if isinstance(page, dict)
+    ) or "<li><strong>Website</strong><span>Review the full website preview.</span></li>"
+
+    preview_frame = (
+        f'<iframe title="Website preview" src="{escape_html(preview_url)}"></iframe>'
+        if preview_url.startswith(("http://", "https://"))
+        else '<div class="empty-preview">No public preview URL recorded yet.</div>'
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape_html(str(data.get('projectName') or 'Website'))} Client Review</title>
+  {render_review_css()}
+</head>
+<body>
+  <header class="topbar client">
+    <div>
+      <p class="eyebrow">Client Review</p>
+      <h1>{escape_html(str(data.get('projectName') or 'Website'))}</h1>
+      <p>{escape_html(str(project.get('goal') or 'Review the website draft and send feedback.'))}</p>
+    </div>
+    <div class="state">{escape_html(str(approval.get('decision') or data.get('workflowState') or 'draft').replace('_', ' ').title())}</div>
+  </header>
+
+  <main>
+    <section class="panel split">
+      <div>
+        <p class="eyebrow">Preview</p>
+        <h2>Current Draft</h2>
+        <p>Review the latest preview, then send approval or revision notes back to Hermes.</p>
+      </div>
+      <div class="actions">{review_link('Open Full Preview', preview_url)}</div>
+    </section>
+
+    <section class="preview-frame">{preview_frame}</section>
+
+    <section class="grid">
+      <article class="panel">
+        <p class="eyebrow">Review Checklist</p>
+        <h2>Pages To Check</h2>
+        <ul class="checklist">{page_items}</ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Feedback History</p>
+        <h2>Comments</h2>
+        <ul class="comments">{render_comment_items(comments)}</ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Hermes Command</p>
+      <h2>Record Client Feedback</h2>
+      <pre>scripts/website_agency.py review-comment --project-dir "{escape_html(str(data.get('projectDir') or '.'))}" --page home --author "client" --decision revision_requested --comment "Describe the requested change"</pre>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
+def render_comment_items(comments: list[Any]) -> str:
+    items = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            f"<li><strong>{escape_html(str(item.get('decision', 'comment')).replace('_', ' ').title())}</strong>"
+            f"<span>{escape_html(str(item.get('comment') or item.get('notes') or ''))}</span>"
+            f"<small>{escape_html(str(item.get('author') or 'client'))} - {escape_html(str(item.get('page') or 'project'))}</small></li>"
+        )
+    return "\n".join(items) or "<li><strong>No feedback recorded.</strong><span>Client comments will appear here.</span></li>"
+
+
+def metric_card(label: str, value: str, detail: str) -> str:
+    return (
+        '<article class="metric">'
+        f"<span>{escape_html(label)}</span>"
+        f"<strong>{escape_html(value)}</strong>"
+        f"<p>{escape_html(detail)}</p>"
+        "</article>"
+    )
+
+
+def review_link(label: str, url: str) -> str:
+    if url:
+        return f'<a href="{escape_html(url)}">{escape_html(label)}</a>'
+    return f'<span class="disabled">{escape_html(label)}</span>'
+
+
+def qa_status_label(report: dict[str, Any]) -> str:
+    if not report:
+        return "Not run"
+    if report.get("ok") is True:
+        return "Passed"
+    if report.get("ok") is False:
+        return "Needs work"
+    return "Recorded"
+
+
+def qa_summary_text(report: dict[str, Any]) -> str:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    if not summary:
+        return "No report yet."
+    return (
+        f"{summary.get('passes', 0)} passed, "
+        f"{summary.get('warnings', 0)} warnings, "
+        f"{summary.get('failures', 0)} failures"
+    )
+
+
+def render_review_css() -> str:
+    return """<style>
+:root { color-scheme: light; --ink: #172033; --muted: #5c667a; --line: #dce2ea; --soft: #f5f7fb; --accent: #0f766e; --accent-ink: #ffffff; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: #ffffff; }
+.topbar { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; padding: 40px 48px 32px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #f8fafc, #ffffff); }
+.topbar h1 { margin: 4px 0 8px; font-size: 36px; line-height: 1.1; }
+.topbar p { margin: 0; max-width: 760px; color: var(--muted); }
+.eyebrow { margin: 0 0 8px; text-transform: uppercase; font-size: 12px; letter-spacing: 0; font-weight: 700; color: var(--accent); }
+.state { white-space: nowrap; border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; font-weight: 700; background: #ffffff; }
+main { width: min(1180px, calc(100% - 32px)); margin: 24px auto 56px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+.metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.panel, .metric { border: 1px solid var(--line); border-radius: 8px; background: #ffffff; padding: 20px; }
+.metric span { display: block; color: var(--muted); font-size: 13px; }
+.metric strong { display: block; margin: 8px 0; font-size: 24px; }
+.metric p, .panel p { color: var(--muted); }
+.split { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+a, .disabled { display: inline-flex; align-items: center; min-height: 38px; padding: 8px 12px; border-radius: 6px; text-decoration: none; font-weight: 700; border: 1px solid var(--accent); }
+a { color: var(--accent-ink); background: var(--accent); }
+.disabled { color: var(--muted); background: var(--soft); border-color: var(--line); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; vertical-align: top; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0; }
+dl { display: grid; gap: 10px; }
+dl div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+dt { color: var(--muted); font-weight: 700; }
+dd { margin: 0; overflow-wrap: anywhere; }
+.activity, .comments, .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.activity li, .comments li, .checklist li { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.activity span, .comments span, .checklist span, time, small { color: var(--muted); }
+.preview-frame { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-height: 520px; background: var(--soft); }
+iframe { width: 100%; height: 70vh; min-height: 520px; border: 0; background: #ffffff; }
+.empty-preview { display: grid; place-items: center; min-height: 520px; color: var(--muted); }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; border-radius: 8px; background: #101827; color: #f8fafc; }
+@media (max-width: 880px) { .topbar, .split { display: block; } .metrics, .grid { grid-template-columns: 1fr; } .state { display: inline-flex; margin-top: 16px; } main { width: min(100% - 20px, 1180px); } }
+</style>"""
 
 
 def approval_request(args: argparse.Namespace) -> dict[str, Any]:
@@ -3518,6 +3935,28 @@ def record_approval(project_dir: Path, event: dict[str, Any]) -> None:
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_review(project_dir: Path, event: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    record = dict(event)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    if record.get("type") == "review-comment":
+        comments = state.setdefault("reviewComments", [])
+        comments.append(record)
+        decision = record.get("decision")
+        if decision == "approved":
+            state["workflowState"] = "approved_for_publish"
+        elif decision == "revision_requested":
+            state["workflowState"] = "revision_requested"
+        elif decision == "rejected":
+            state["workflowState"] = "approval_rejected"
+    else:
+        events = state.setdefault("reviewEvents", [])
+        events.append(record)
+        state["lastReview"] = record
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def record_visual_qa(project_dir: Path, report: dict[str, Any]) -> None:
     state_file = project_dir / STATE_PATH
     state = read_state(state_file)
@@ -3745,6 +4184,26 @@ def build_parser() -> argparse.ArgumentParser:
     approval_rec.add_argument("--approver", default="", help="Person or channel that approved/rejected.")
     approval_rec.add_argument("--notes", default="", help="Decision notes.")
     approval_rec.set_defaults(func=approval_record)
+
+    review = subparsers.add_parser("review-build", help="Create a static agency dashboard and client review page.")
+    review.add_argument("--project-dir", default=".", help="Website project directory.")
+    review.add_argument("--title", default="", help="Dashboard title.")
+    review.add_argument("--public-preview-url", default="", help="Preview URL override shown in the review.")
+    review.add_argument("--client-name", default="", help="Client or reviewer name.")
+    review.set_defaults(func=review_build)
+
+    review_feedback = subparsers.add_parser("review-comment", help="Record client review feedback in project history.")
+    review_feedback.add_argument("--project-dir", default=".", help="Website project directory.")
+    review_feedback.add_argument("--page", default="project", help="Page or area being reviewed.")
+    review_feedback.add_argument("--author", default="client", help="Reviewer name.")
+    review_feedback.add_argument("--comment", default="", help="Feedback text.")
+    review_feedback.add_argument(
+        "--decision",
+        choices=("comment", "approved", "revision_requested", "rejected"),
+        default="comment",
+        help="Review decision.",
+    )
+    review_feedback.set_defaults(func=review_comment)
 
     sections = subparsers.add_parser("list-sections", help="List editable sections in a generated website.")
     sections.add_argument("--project-dir", default=".", help="Website project directory.")

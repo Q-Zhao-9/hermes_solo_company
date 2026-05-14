@@ -1397,3 +1397,95 @@ def test_publish_wordpress_content_updates_existing_page(monkeypatch):
     assert calls[0][0] == "list_pages"
     assert calls[1][0] == "update_page"
     assert calls[1][1]["id"] == 77
+
+
+def test_review_build_creates_dashboard_and_client_review(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--audience",
+        "local families",
+        "--goal",
+        "Book an appointment",
+        "--platform",
+        "static",
+        "--pages",
+        "home,about,services",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+    run_script("qa", "--project-dir", str(project_dir))
+    run_script(
+        "approval-request",
+        "--project-dir",
+        str(project_dir),
+        "--target",
+        "deploy",
+        "--summary",
+        "Approve final preview",
+        "--preview-url",
+        "https://preview.example/acme",
+    )
+
+    result = run_script(
+        "review-build",
+        "--project-dir",
+        str(project_dir),
+        "--public-preview-url",
+        "https://preview.example/acme",
+        "--client-name",
+        "Acme Team",
+    )
+
+    dashboard = project_dir / "dist" / "hermes-review" / "index.html"
+    client = project_dir / "dist" / "hermes-review" / "client-review.html"
+    review_state = json.loads((project_dir / "dist" / "hermes-review" / "state.json").read_text(encoding="utf-8"))
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert dashboard.exists()
+    assert client.exists()
+    assert "Acme Dental" in dashboard.read_text(encoding="utf-8")
+    assert "Open Client Review" in dashboard.read_text(encoding="utf-8")
+    assert "https://preview.example/acme" in client.read_text(encoding="utf-8")
+    assert review_state["clientName"] == "Acme Team"
+    assert [page["slug"] for page in review_state["pages"]] == ["home", "about", "services"]
+    assert state["lastReview"]["type"] == "review-build"
+
+
+def test_review_comment_records_client_feedback(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Dental",
+        "--description",
+        "Family dental clinic for busy parents.",
+        "--platform",
+        "static",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "review-comment",
+        "--project-dir",
+        str(project_dir),
+        "--page",
+        "home",
+        "--author",
+        "client",
+        "--decision",
+        "revision_requested",
+        "--comment",
+        "Make the hero more premium.",
+    )
+
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert state["workflowState"] == "revision_requested"
+    assert state["reviewComments"][0]["page"] == "home"
+    assert state["reviewComments"][0]["comment"] == "Make the hero more premium."

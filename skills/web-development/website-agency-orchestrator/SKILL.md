@@ -19,7 +19,7 @@ HTML snippet generator.
 Follow this sequence unless the user explicitly asks for a quick patch:
 
 ```text
-brief -> sitemap -> design system -> content -> code -> QA -> preview -> revise -> deploy
+brief -> sitemap -> design system -> content -> code -> QA -> preview -> client review -> revise -> deploy
 ```
 
 Keep artifacts in the project when practical:
@@ -75,7 +75,8 @@ Default to:
 6. Run build/lint/tests when available.
 7. Use `hermes-proxy-server` for local live preview or `sitelet-cloud-render`
    for uploaded HTML previews.
-8. Use `website-qa-deploy` before publishing.
+8. Generate the client review dashboard before approval conversations.
+9. Use `website-qa-deploy` before publishing.
 
 ## Bot Commands To Recognize
 
@@ -111,6 +112,8 @@ For multi-page generated projects, use:
 ```bash
 scripts/website_agency.py create-site --name "<site>" --description "<business>" --pages home,about,services,contact
 scripts/website_agency.py add-page --project-dir "<project dir>" --title FAQ --page-type faq --description "<page purpose>"
+scripts/website_agency.py review-build --project-dir "<project dir>" --public-preview-url "<preview url>"
+scripts/website_agency.py review-comment --project-dir "<project dir>" --page home --decision revision_requested --comment "<client feedback>"
 ```
 
 After implementation, return:
@@ -118,6 +121,7 @@ After implementation, return:
 - changed files or project path
 - build result
 - public preview URL
+- review dashboard path when client review is part of the task
 - remaining risks or deployment next step
 
 Do not overwhelm the user with every internal detail.

@@ -67,6 +67,17 @@ docs/hermes-website-state.json
 - For local apps, use `hermes-proxy-server` to expose a public URL.
 - For generated/static HTML, `sitelet-cloud-render` is acceptable.
 - Return the public URL and what local target it maps to.
+- For client review, generate the static review workspace:
+
+```bash
+scripts/website_agency.py review-build --project-dir "<project dir>" --public-preview-url "<preview url>"
+```
+
+Record approval or revision feedback from the client:
+
+```bash
+scripts/website_agency.py review-comment --project-dir "<project dir>" --page home --decision revision_requested --comment "<client feedback>"
+```
 
 ## Deployment Routing
 

@@ -54,6 +54,8 @@ scripts/website_agency.py edit-section --project-dir generated-sites/acme-dental
 scripts/website_agency.py change-style --project-dir generated-sites/acme-dental --preset luxury
 scripts/website_agency.py qa --project-dir generated-sites/acme-dental
 scripts/website_agency.py visual-qa --project-dir generated-sites/acme-dental
+scripts/website_agency.py review-build --project-dir generated-sites/acme-dental --client-name "Acme Team"
+scripts/website_agency.py review-comment --project-dir generated-sites/acme-dental --page home --decision revision_requested --comment "Make the hero more premium"
 scripts/website_agency.py deploy-prep --project-dir generated-sites/acme-dental --target auto
 scripts/website_agency.py deploy-run --project-dir generated-sites/acme-dental --target static-dir --destination /tmp/acme-deploy
 scripts/website_agency.py summary --project-dir generated-sites/acme-dental
@@ -95,6 +97,31 @@ This records:
 - deployment preparation
 - WordPress package and preview events
 - approval requests and decisions
+- client review dashboard builds and comments
+
+## Client Review Dashboard
+
+Generate a static agency dashboard and a client-facing review page from the
+project history:
+
+```bash
+scripts/website_agency.py review-build --project-dir generated-sites/acme-dental --public-preview-url https://preview.example/acme --client-name "Acme Team"
+```
+
+This writes:
+
+```text
+dist/hermes-review/index.html
+dist/hermes-review/client-review.html
+dist/hermes-review/state.json
+```
+
+Use `client-review.html` when sharing the latest preview with a client. Record
+their decision or revision notes back into the project state:
+
+```bash
+scripts/website_agency.py review-comment --project-dir generated-sites/acme-dental --page home --author "client" --decision revision_requested --comment "Make the hero more premium"
+```
 
 ## Multi-Page Sites
 
