@@ -114,6 +114,7 @@ scripts/website_agency.py create-site --name "<site>" --description "<business>"
 scripts/website_agency.py add-page --project-dir "<project dir>" --title FAQ --page-type faq --description "<page purpose>"
 scripts/website_agency.py review-build --project-dir "<project dir>" --public-preview-url "<preview url>"
 scripts/website_agency.py review-comment --project-dir "<project dir>" --page home --decision revision_requested --comment "<client feedback>"
+scripts/website_agency.py shopify-package --project-dir "<project dir>" --package-type product-page --title "<product title>" --handle "<handle>"
 ```
 
 After implementation, return:

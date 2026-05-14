@@ -1,7 +1,7 @@
 ---
 name: setup-shopify
 description: Plan, edit, preview, or prepare Shopify storefront/theme work for ecommerce pages, products, collections, Liquid sections, SEO, and conversion improvements.
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     tags: [web-development, shopify, ecommerce, command]
@@ -24,3 +24,12 @@ theme, product, collection, or storefront work.
    and responsive storefront behavior.
 5. Do not change checkout, payment, taxes, shipping, or live theme settings
    without clear approval.
+
+For generated website projects, create a Shopify handoff package:
+
+```bash
+scripts/website_agency.py shopify-package --project-dir "<project dir>" --package-type theme-section --title "<storefront title>" --handle "<handle>"
+```
+
+Return the generated `dist/hermes-shopify/preview.html`, install notes, and zip
+path to the user.

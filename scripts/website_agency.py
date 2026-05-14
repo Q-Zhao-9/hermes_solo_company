@@ -32,6 +32,7 @@ DEPLOY_DIR = Path("dist") / "hermes-deploy"
 WORDPRESS_DIR = Path("dist") / "hermes-wordpress"
 MEDIA_DIR = Path("assets") / "images"
 REVIEW_DIR = Path("dist") / "hermes-review"
+SHOPIFY_DIR = Path("dist") / "hermes-shopify"
 
 
 @dataclass(frozen=True)
@@ -1459,6 +1460,10 @@ def format_discord_summary(project_dir: Path, state: dict[str, Any]) -> str:
     if deployment.get("artifact"):
         lines.append(f"Deploy artifact: `{deployment['artifact']}`")
 
+    shopify = state.get("lastShopify", {}) if isinstance(state.get("lastShopify"), dict) else {}
+    if shopify.get("zipPath"):
+        lines.append(f"Shopify package: `{shopify['zipPath']}`")
+
     lines.append("")
     lines.append("Next: run `/build-preview`, `/edit-section`, `/seo-optimize`, or `/deploy-site` as needed.")
     return "\n".join(lines)
@@ -2525,6 +2530,406 @@ def wordpress_package(args: argparse.Namespace) -> dict[str, Any]:
         "notesPath": str(notes_path),
         "statePath": str(project_dir / STATE_PATH),
     }
+
+
+def shopify_package(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    title = args.title or infer_project_title(project_dir)
+    handle = slugify(args.handle or title, fallback="hermes-storefront")
+    package_kind = args.package_type
+    shopify_dir = project_dir / SHOPIFY_DIR
+    theme_dir = shopify_dir / "theme"
+    sections_dir = theme_dir / "sections"
+    templates_dir = theme_dir / "templates"
+    snippets_dir = theme_dir / "snippets"
+    assets_dir = theme_dir / "assets"
+    for path in (sections_dir, templates_dir, snippets_dir, assets_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    shopify_data = build_shopify_data(project_dir, state, title=title, handle=handle, args=args)
+    section_name = f"hermes-{handle}.liquid"
+    template_name = f"page.{handle}.json"
+    css_name = f"hermes-{handle}.css"
+    snippet_name = "hermes-trust-badges.liquid"
+    section_path = sections_dir / section_name
+    template_path = templates_dir / template_name
+    css_path = assets_dir / css_name
+    snippet_path = snippets_dir / snippet_name
+    preview_path = shopify_dir / "preview.html"
+    spec_path = shopify_dir / "shopify-package.json"
+    notes_path = shopify_dir / "SHOPIFY.md"
+    zip_path = shopify_dir / f"{handle}-shopify-theme.zip"
+
+    write_text(section_path, render_shopify_section(shopify_data, css_name=css_name, snippet_name=snippet_name))
+    write_text(template_path, render_shopify_template_json(section_name, shopify_data))
+    write_text(css_path, render_shopify_css())
+    write_text(snippet_path, render_shopify_trust_snippet())
+    write_text(preview_path, render_shopify_preview(shopify_data))
+
+    spec = {
+        "title": title,
+        "handle": handle,
+        "packageType": package_kind,
+        "storeUrl": args.store_url,
+        "themeName": args.theme_name,
+        "sectionFile": str(section_path.relative_to(project_dir)),
+        "templateFile": str(template_path.relative_to(project_dir)),
+        "cssFile": str(css_path.relative_to(project_dir)),
+        "snippetFile": str(snippet_path.relative_to(project_dir)),
+        "previewFile": str(preview_path.relative_to(project_dir)),
+        "sourceProject": str(project_dir),
+        "safety": "Install on a duplicate/development theme first. Do not alter checkout, payment, tax, shipping, or live theme settings without approval.",
+        "data": shopify_data,
+    }
+    write_text(spec_path, json.dumps(spec, indent=2))
+    write_text(notes_path, render_shopify_notes(spec))
+    create_zip_from_directory(theme_dir, zip_path)
+
+    event = {
+        "type": "shopify-package",
+        "title": title,
+        "handle": handle,
+        "packageType": package_kind,
+        "storeUrl": args.store_url,
+        "themeName": args.theme_name,
+        "sectionFile": str(section_path.relative_to(project_dir)),
+        "templateFile": str(template_path.relative_to(project_dir)),
+        "previewFile": str(preview_path.relative_to(project_dir)),
+        "specPath": str(spec_path.relative_to(project_dir)),
+        "zipPath": str(zip_path.relative_to(project_dir)),
+        "template": project.get("template", ""),
+    }
+    record_shopify(project_dir, event)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "title": title,
+        "handle": handle,
+        "packageType": package_kind,
+        "sectionFile": str(section_path),
+        "templateFile": str(template_path),
+        "cssFile": str(css_path),
+        "snippetFile": str(snippet_path),
+        "previewFile": str(preview_path),
+        "specPath": str(spec_path),
+        "zipPath": str(zip_path),
+        "notesPath": str(notes_path),
+        "statePath": str(project_dir / STATE_PATH),
+    }
+
+
+def build_shopify_data(project_dir: Path, state: dict[str, Any], *, title: str, handle: str, args: argparse.Namespace) -> dict[str, Any]:
+    project = state.get("project", {}) if isinstance(state.get("project"), dict) else {}
+    pages = state.get("pages", []) if isinstance(state.get("pages"), list) else []
+    media_assets = state.get("mediaAssets", []) if isinstance(state.get("mediaAssets"), list) else []
+    description = args.description or str(project.get("description") or "")
+    audience = args.audience or str(project.get("audience") or "online shoppers")
+    goal = args.goal or str(project.get("goal") or "Shop the collection")
+    product_title = args.product_title or title
+    collection_title = args.collection_title or f"{title} Collection"
+    sections = shopify_sections_from_project(project_dir)
+    benefits = [section["heading"] for section in sections if section.get("heading")][:3]
+    while len(benefits) < 3:
+        benefits.append(["Curated products", "Clear product benefits", "Confident checkout path"][len(benefits)])
+    product_points = [
+        f"Designed for {audience}",
+        "Clear benefits, trust copy, and merchant-editable content",
+        "Ready for a duplicate Shopify theme before production review",
+    ]
+    return {
+        "title": title,
+        "handle": handle,
+        "description": description,
+        "audience": audience,
+        "goal": goal,
+        "productTitle": product_title,
+        "collectionTitle": collection_title,
+        "storeUrl": args.store_url,
+        "themeName": args.theme_name,
+        "pages": pages,
+        "mediaAssets": media_assets,
+        "sections": sections,
+        "benefits": benefits,
+        "productPoints": product_points,
+        "seoTitle": args.seo_title or f"{product_title} | {title}",
+        "seoDescription": args.seo_description or description[:155],
+    }
+
+
+def shopify_sections_from_project(project_dir: Path) -> list[dict[str, str]]:
+    platform = detect_platform(project_dir)
+    source_path = primary_page_path(project_dir, platform)
+    if source_path:
+        sections = extract_sections(source_path, platform)
+        if sections:
+            return sections[:6]
+    state = read_state(project_dir / STATE_PATH)
+    pages = state.get("pages", []) if isinstance(state.get("pages"), list) else []
+    return [
+        {
+            "id": str(page.get("slug") or f"page-{index + 1}"),
+            "heading": str(page.get("title") or "Store section"),
+            "body": str(page.get("description") or page.get("goal") or "Review this Shopify storefront section."),
+        }
+        for index, page in enumerate(pages)
+        if isinstance(page, dict)
+    ][:6]
+
+
+def render_shopify_section(data: dict[str, Any], *, css_name: str, snippet_name: str) -> str:
+    blocks = [{"type": "benefit", "name": "Benefit", "settings": [{"type": "text", "id": "title", "label": "Title", "default": "Benefit"}]}]
+    schema = {
+        "name": "Hermes agency storefront",
+        "tag": "section",
+        "class": "section-hermes-agency",
+        "settings": [
+            {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Shopify storefront"},
+            {"type": "text", "id": "heading", "label": "Heading", "default": data["productTitle"]},
+            {"type": "textarea", "id": "body", "label": "Body", "default": data["description"]},
+            {"type": "text", "id": "cta_label", "label": "CTA label", "default": data["goal"]},
+            {"type": "url", "id": "cta_link", "label": "CTA link"},
+            {"type": "text", "id": "secondary_note", "label": "Trust note", "default": "Shipping, returns, and support details stay merchant-editable."},
+        ],
+        "blocks": blocks,
+        "presets": [
+            {
+                "name": "Hermes agency storefront",
+                "blocks": [{"type": "benefit", "settings": {"title": benefit}} for benefit in data["benefits"]],
+            }
+        ],
+    }
+    schema_json = json.dumps(schema, indent=2)
+    collection_literal = json.dumps(str(data["collectionTitle"]))
+    product_literal = json.dumps(str(data["productTitle"]))
+    return f"""{{{{ '{css_name}' | asset_url | stylesheet_tag }}}}
+
+<section class="hermes-agency" aria-labelledby="HermesAgencyHeading-{{{{ section.id }}}}">
+  <div class="hermes-agency__content">
+    <p class="hermes-agency__eyebrow">{{{{ section.settings.eyebrow | escape }}}}</p>
+    <h1 id="HermesAgencyHeading-{{{{ section.id }}}}">{{{{ section.settings.heading | escape }}}}</h1>
+    <p class="hermes-agency__body">{{{{ section.settings.body | escape }}}}</p>
+    <div class="hermes-agency__actions">
+      <a class="hermes-agency__button" href="{{{{ section.settings.cta_link | default: routes.all_products_collection_url }}}}">
+        {{{{ section.settings.cta_label | escape }}}}
+      </a>
+      <span>{{{{ section.settings.secondary_note | escape }}}}</span>
+    </div>
+  </div>
+
+  <div class="hermes-agency__panel">
+    <p>{{{{ {collection_literal} | escape }}}}</p>
+    <h2>{{{{ {product_literal} | escape }}}}</h2>
+    <ul>
+      {{% for block in section.blocks %}}
+        <li {{{{ block.shopify_attributes }}}}>{{{{ block.settings.title | escape }}}}</li>
+      {{% endfor %}}
+    </ul>
+    {{% render '{Path(snippet_name).stem}' %}}
+  </div>
+</section>
+
+{{% schema %}}
+{schema_json}
+{{% endschema %}}
+"""
+
+
+def render_shopify_template_json(section_name: str, data: dict[str, Any]) -> str:
+    section_key = Path(section_name).stem
+    payload = {
+        "sections": {
+            "main": {
+                "type": section_key,
+                "settings": {
+                    "eyebrow": "Shopify storefront",
+                    "heading": data["productTitle"],
+                    "body": data["description"],
+                    "cta_label": data["goal"],
+                    "secondary_note": "Install on a duplicate theme, review, then publish after approval.",
+                },
+                "blocks": {
+                    f"benefit_{index + 1}": {"type": "benefit", "settings": {"title": benefit}}
+                    for index, benefit in enumerate(data["benefits"])
+                },
+                "block_order": [f"benefit_{index + 1}" for index in range(len(data["benefits"]))],
+            }
+        },
+        "order": ["main"],
+    }
+    return json.dumps(payload, indent=2)
+
+
+def render_shopify_css() -> str:
+    return """.hermes-agency {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr);
+  gap: 32px;
+  align-items: center;
+  padding: clamp(36px, 7vw, 84px) clamp(18px, 5vw, 64px);
+  background: #f7f8fb;
+  color: #172033;
+}
+.hermes-agency__eyebrow {
+  margin: 0 0 10px;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 12px;
+  color: #0f766e;
+}
+.hermes-agency h1 {
+  margin: 0;
+  max-width: 760px;
+  font-size: clamp(34px, 6vw, 68px);
+  line-height: 1.02;
+}
+.hermes-agency__body {
+  max-width: 680px;
+  margin: 18px 0 0;
+  color: #5c667a;
+  font-size: 18px;
+  line-height: 1.7;
+}
+.hermes-agency__actions {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+.hermes-agency__button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: #0f766e;
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+}
+.hermes-agency__panel {
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 24px;
+}
+.hermes-agency__panel p {
+  color: #5c667a;
+  margin: 0 0 8px;
+}
+.hermes-agency__panel h2 {
+  margin: 0 0 16px;
+}
+.hermes-agency__panel li {
+  margin: 10px 0;
+}
+.hermes-trust {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+.hermes-trust span {
+  display: block;
+  padding: 10px;
+  border: 1px solid #dce2ea;
+  border-radius: 6px;
+  font-size: 13px;
+}
+@media (max-width: 820px) {
+  .hermes-agency { grid-template-columns: 1fr; }
+  .hermes-trust { grid-template-columns: 1fr; }
+}
+"""
+
+
+def render_shopify_trust_snippet() -> str:
+    return """<div class="hermes-trust" aria-label="Store trust signals">
+  <span>Clear product benefits</span>
+  <span>Merchant-editable copy</span>
+  <span>Review before publishing</span>
+</div>
+"""
+
+
+def render_shopify_preview(data: dict[str, Any]) -> str:
+    benefits = "\n".join(f"<li>{escape_html(benefit)}</li>" for benefit in data["benefits"])
+    points = "\n".join(f"<li>{escape_html(point)}</li>" for point in data["productPoints"])
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape_html(data['seoTitle'])}</title>
+  <meta name="description" content="{escape_html(data['seoDescription'])}">
+  <style>{render_shopify_css()}</style>
+</head>
+<body>
+  <section class="hermes-agency">
+    <div class="hermes-agency__content">
+      <p class="hermes-agency__eyebrow">Shopify storefront preview</p>
+      <h1>{escape_html(data['productTitle'])}</h1>
+      <p class="hermes-agency__body">{escape_html(data['description'])}</p>
+      <div class="hermes-agency__actions">
+        <a class="hermes-agency__button" href="#shop">{escape_html(data['goal'])}</a>
+        <span>Duplicate theme review recommended.</span>
+      </div>
+    </div>
+    <div class="hermes-agency__panel">
+      <p>{escape_html(data['collectionTitle'])}</p>
+      <h2>Conversion plan</h2>
+      <ul>{benefits}</ul>
+      <div class="hermes-trust"><span>Reviews</span><span>Shipping</span><span>Returns</span></div>
+    </div>
+  </section>
+  <main class="hermes-agency__panel" id="shop" style="margin:24px auto;max-width:980px;">
+    <p class="hermes-agency__eyebrow">Product page copy</p>
+    <h2>{escape_html(data['productTitle'])}</h2>
+    <ul>{points}</ul>
+  </main>
+</body>
+</html>
+"""
+
+
+def render_shopify_notes(spec: dict[str, Any]) -> str:
+    return f"""# Shopify Theme Package
+
+## Package
+
+- Title: {spec['title']}
+- Handle: {spec['handle']}
+- Type: {spec['packageType']}
+- Store URL: {spec.get('storeUrl') or 'not set'}
+- Theme: {spec.get('themeName') or 'duplicate/development theme recommended'}
+- Section: `{spec['sectionFile']}`
+- Template: `{spec['templateFile']}`
+- CSS: `{spec['cssFile']}`
+- Preview: `{spec['previewFile']}`
+
+## Safe Install Workflow
+
+1. Create or select a duplicate/development Shopify theme.
+2. Copy files from `dist/hermes-shopify/theme/` into the matching theme folders.
+3. In Shopify admin, create a page and assign template `page.{spec['handle']}`.
+4. Preview the duplicate/development theme and collect approval.
+5. Publish only after explicit approval.
+
+Do not change checkout, payment, taxes, shipping, or live theme settings from
+this package.
+"""
+
+
+def create_zip_from_directory(source_dir: Path, zip_path: Path) -> None:
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(source_dir.rglob("*")):
+            if path.is_file():
+                archive.write(path, path.relative_to(source_dir))
 
 
 def wordpress_preview(args: argparse.Namespace) -> dict[str, Any]:
@@ -3915,6 +4320,18 @@ def record_wordpress(project_dir: Path, event: dict[str, Any]) -> None:
     write_text(state_file, json.dumps(state, indent=2))
 
 
+def record_shopify(project_dir: Path, event: dict[str, Any]) -> None:
+    state_file = project_dir / STATE_PATH
+    state = read_state(state_file)
+    events = state.setdefault("shopify", [])
+    record = dict(event)
+    record["createdAt"] = datetime.now(timezone.utc).isoformat()
+    events.append(record)
+    state["lastShopify"] = record
+    state["workflowState"] = "shopify_package_ready"
+    write_text(state_file, json.dumps(state, indent=2))
+
+
 def record_approval(project_dir: Path, event: dict[str, Any]) -> None:
     state_file = project_dir / STATE_PATH
     state = read_state(state_file)
@@ -4167,6 +4584,27 @@ def build_parser() -> argparse.ArgumentParser:
     wp_publish.add_argument("--mcp-token", default=os.getenv("WORDPRESS_MCP_TOKEN", os.getenv("HERMES_WORDPRESS_MCP_TOKEN", "")))
     wp_publish.add_argument("--approved", action="store_true", help="Required acknowledgement that the preview was approved.")
     wp_publish.set_defaults(func=wordpress_publish)
+
+    shopify = subparsers.add_parser("shopify-package", help="Create a Shopify theme section/template package and local preview.")
+    shopify.add_argument("--project-dir", default=".", help="Website project directory.")
+    shopify.add_argument(
+        "--package-type",
+        choices=("theme-section", "product-page", "collection-page"),
+        default="theme-section",
+        help="Shopify package type to prepare.",
+    )
+    shopify.add_argument("--title", default="", help="Package title. Defaults to project name.")
+    shopify.add_argument("--handle", default="", help="Shopify page/template handle.")
+    shopify.add_argument("--store-url", default="", help="Target Shopify store URL, if known.")
+    shopify.add_argument("--theme-name", default="", help="Target duplicate/development theme name, if known.")
+    shopify.add_argument("--product-title", default="", help="Primary product or landing title.")
+    shopify.add_argument("--collection-title", default="", help="Primary collection title.")
+    shopify.add_argument("--description", default="", help="Override storefront description.")
+    shopify.add_argument("--audience", default="", help="Override target audience.")
+    shopify.add_argument("--goal", default="", help="Override CTA label.")
+    shopify.add_argument("--seo-title", default="", help="SEO title for preview/package notes.")
+    shopify.add_argument("--seo-description", default="", help="SEO description for preview/package notes.")
+    shopify.set_defaults(func=shopify_package)
 
     approval_req = subparsers.add_parser("approval-request", help="Record a preview approval request.")
     approval_req.add_argument("--project-dir", default=".", help="Website project directory.")

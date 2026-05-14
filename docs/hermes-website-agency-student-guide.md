@@ -64,6 +64,7 @@ scripts/website_agency.py wordpress-preview --project-dir generated-sites/acme-d
 scripts/website_agency.py approval-request --project-dir generated-sites/acme-dental --target wordpress-publish --reference dist/hermes-wordpress/home.json --summary "Approve WordPress Home draft"
 scripts/website_agency.py approval-record --project-dir generated-sites/acme-dental --target wordpress-publish --reference dist/hermes-wordpress/home.json --decision approved
 scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-dental --spec dist/hermes-wordpress/home.json
+scripts/website_agency.py shopify-package --project-dir generated-sites/acme-store --package-type product-page --title "Acme Travel Kit" --handle travel-kit
 ```
 
 ## Preview Sharing
@@ -96,6 +97,7 @@ This records:
 - edit/style revisions
 - deployment preparation
 - WordPress package and preview events
+- Shopify theme section/template packages
 - approval requests and decisions
 - client review dashboard builds and comments
 
@@ -198,6 +200,31 @@ scripts/website_agency.py wordpress-publish --project-dir generated-sites/acme-d
 This creates Gutenberg-style content in `dist/hermes-wordpress/`, records the
 event in `docs/hermes-website-state.json`, and requires a recorded approval or
 the explicit `--approved` override before writing to WordPress.
+
+## Shopify
+
+Prepare a Shopify theme package from a generated ecommerce site:
+
+```bash
+scripts/website_agency.py create-site --name "Acme Goods" --description "Ecommerce store for curated travel accessories" --template ecommerce --pages home,about,contact
+scripts/website_agency.py shopify-package --project-dir generated-sites/acme-goods --package-type product-page --title "Acme Travel Kit" --handle travel-kit --theme-name "Hermes Duplicate"
+```
+
+This writes:
+
+```text
+dist/hermes-shopify/theme/sections/hermes-<handle>.liquid
+dist/hermes-shopify/theme/templates/page.<handle>.json
+dist/hermes-shopify/theme/assets/hermes-<handle>.css
+dist/hermes-shopify/theme/snippets/hermes-trust-badges.liquid
+dist/hermes-shopify/preview.html
+dist/hermes-shopify/shopify-package.json
+dist/hermes-shopify/<handle>-shopify-theme.zip
+```
+
+Install Shopify packages only on a duplicate/development theme first. Do not
+change checkout, payment, taxes, shipping, or live theme settings without clear
+approval.
 
 ## Templates
 

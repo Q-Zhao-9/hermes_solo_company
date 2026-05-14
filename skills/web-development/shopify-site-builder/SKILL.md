@@ -1,7 +1,7 @@
 ---
 name: shopify-site-builder
 description: Plan, edit, preview, and QA Shopify storefront work including theme customization, Liquid sections, product and collection pages, SEO copy, app extension guidance, and Hydrogen storefront planning.
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     tags: [web-development, shopify, ecommerce, liquid, hydrogen, product-pages, seo]
@@ -56,6 +56,25 @@ Collect:
 5. Avoid hard-coded merchant content when a theme setting is better.
 6. Preview on a development theme or local theme server when available.
 7. Summarize changed files and merchant-editable settings.
+
+For generated Hermes website projects, prepare the Shopify package with:
+
+```bash
+scripts/website_agency.py shopify-package --project-dir "<project dir>" --package-type product-page --title "<product or page title>" --handle "<shopify-handle>"
+```
+
+This creates a safe handoff under `dist/hermes-shopify/`:
+
+- Liquid section
+- JSON page template
+- CSS asset
+- trust snippet
+- local `preview.html`
+- install notes
+- zipped theme file package
+
+Install the files into a duplicate/development theme first, then collect review
+approval before publishing.
 
 ## Product Page Optimization
 

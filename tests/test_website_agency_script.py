@@ -1489,3 +1489,62 @@ def test_review_comment_records_client_feedback(tmp_path):
     assert state["workflowState"] == "revision_requested"
     assert state["reviewComments"][0]["page"] == "home"
     assert state["reviewComments"][0]["comment"] == "Make the hero more premium."
+
+
+def test_shopify_package_generates_theme_files_preview_and_history(tmp_path):
+    generated = run_script(
+        "create-site",
+        "--name",
+        "Acme Goods",
+        "--description",
+        "Ecommerce store for curated travel accessories.",
+        "--audience",
+        "frequent travelers",
+        "--goal",
+        "Shop the collection",
+        "--platform",
+        "static",
+        "--template",
+        "ecommerce",
+        "--pages",
+        "home,about,contact",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(generated["projectDir"])
+
+    result = run_script(
+        "shopify-package",
+        "--project-dir",
+        str(project_dir),
+        "--package-type",
+        "product-page",
+        "--title",
+        "Acme Travel Kit",
+        "--handle",
+        "travel-kit",
+        "--store-url",
+        "https://acme-goods.myshopify.com",
+        "--theme-name",
+        "Hermes Duplicate",
+    )
+
+    section = Path(result["sectionFile"]).read_text(encoding="utf-8")
+    template = json.loads(Path(result["templateFile"]).read_text(encoding="utf-8"))
+    spec = json.loads(Path(result["specPath"]).read_text(encoding="utf-8"))
+    state = json.loads((project_dir / "docs" / "hermes-website-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert "{% schema %}" in section
+    assert "Hermes agency storefront" in section
+    assert template["sections"]["main"]["type"] == "hermes-travel-kit"
+    assert Path(result["previewFile"]).exists()
+    assert Path(result["zipPath"]).exists()
+    with zipfile.ZipFile(result["zipPath"]) as archive:
+        names = set(archive.namelist())
+    assert "sections/hermes-travel-kit.liquid" in names
+    assert "templates/page.travel-kit.json" in names
+    assert "assets/hermes-travel-kit.css" in names
+    assert spec["safety"].startswith("Install on a duplicate")
+    assert state["workflowState"] == "shopify_package_ready"
+    assert state["lastShopify"]["type"] == "shopify-package"
+    assert state["lastShopify"]["zipPath"] == "dist/hermes-shopify/travel-kit-shopify-theme.zip"
