@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, monitoring-automation, multi-brand-workspace, experiment-management, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, monitoring-automation, multi-brand-workspace, experiment-management, budget-roi-planning, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -114,6 +114,15 @@ scripts/marketing_agency.py experiment-report --project-dir "<project dir>" --ex
 scripts/marketing_agency.py portfolio-experiment-history --workspace-dir "<workspace dir>" --period "<period>"
 ```
 
+Phase 12 supports budget and ROI planning:
+
+```bash
+scripts/marketing_agency.py create-budget-plan --project-dir "<project dir>" --budget 3000 --period "<period>"
+scripts/marketing_agency.py record-spend --project-dir "<project dir>" --plan-id "<plan>" --channel LinkedIn --metrics "spend=500,revenue=1200,leads=6,conversions=2"
+scripts/marketing_agency.py budget-report --project-dir "<project dir>" --plan-id "<plan>" --period "<period>"
+scripts/marketing_agency.py portfolio-budget-review --workspace-dir "<workspace dir>" --period "<period>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -142,6 +151,9 @@ scripts/marketing_agency.py portfolio-experiment-history --workspace-dir "<works
 - **Experiment management**: use `experiment-management`,
   `create-experiment`, `record-experiment-result`, `experiment-report`, and
   `portfolio-experiment-history`.
+- **Budget and ROI planning**: use `budget-roi-planning`,
+  `create-budget-plan`, `record-spend`, `budget-report`, and
+  `portfolio-budget-review`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.

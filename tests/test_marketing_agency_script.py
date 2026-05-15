@@ -1516,3 +1516,168 @@ def test_portfolio_experiment_history_rolls_up_registered_brand_reports(tmp_path
     assert "Problem hook" in history_md
     assert "Create the first campaign experiment for Beta AI." in history_md
     assert workspace_state["workflowState"] == "experiment_history_ready"
+
+
+def test_create_budget_plan_record_spend_and_budget_report(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script(
+        "create-campaign",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Reduce Loading Loss",
+        "--objective",
+        "reduce loading losses by 5%",
+        "--channels",
+        "LinkedIn,SEO blog,Email",
+    )
+
+    plan = run_script(
+        "create-budget-plan",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Q2 demand budget",
+        "--budget",
+        "3000",
+        "--period",
+        "2026-Q2",
+        "--channels",
+        "LinkedIn,SEO blog,Email",
+        "--owner",
+        "marketing ops",
+    )
+    run_script(
+        "record-spend",
+        "--project-dir",
+        str(project_dir),
+        "--plan-id",
+        plan["budgetPlan"]["id"],
+        "--channel",
+        "LinkedIn",
+        "--period",
+        "2026-W21",
+        "--metrics",
+        "spend=1000,revenue=2400,leads=8,conversions=2,impressions=10000,clicks=250",
+        "--notes",
+        "Paid LinkedIn campaign.",
+    )
+    run_script(
+        "record-spend",
+        "--project-dir",
+        str(project_dir),
+        "--plan-id",
+        plan["budgetPlan"]["id"],
+        "--channel",
+        "SEO blog",
+        "--period",
+        "2026-W21",
+        "--metrics",
+        "spend=500,revenue=900,leads=6,conversions=1,impressions=5000,clicks=200",
+    )
+    report = run_script(
+        "budget-report",
+        "--project-dir",
+        str(project_dir),
+        "--plan-id",
+        plan["budgetPlan"]["id"],
+        "--period",
+        "2026-Q2",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    plan_md = Path(plan["budgetPlansPath"]).read_text(encoding="utf-8")
+    report_md = Path(report["budgetReportPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert plan["ok"] is True
+    assert plan["budgetPlan"]["totalBudget"] == 3000.0
+    assert len(plan["budgetPlan"]["allocations"]) == 3
+    assert "Q2 demand budget" in plan_md
+    assert report["ok"] is True
+    assert report["budgetReport"]["totalSpend"] == 1500.0
+    assert report["budgetReport"]["remainingBudget"] == 1500.0
+    assert report["budgetReport"]["totals"]["derivedMetrics"]["roi"] == 1.2
+    assert "Cost per lead" in report_md
+    assert "Best ROI channel so far" in report_md
+    assert state["workflowState"] == "budget_report_ready"
+    assert "Budget report: spend `1500.00`, ROI `120.0%`" in summary["summary"]
+
+
+def test_portfolio_budget_review_rolls_up_registered_brand_reports(tmp_path):
+    acme = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    beta = run_script(
+        "create-strategy",
+        "--brand",
+        "Beta AI",
+        "--business",
+        "AI workflow automation software for operations teams.",
+        "--audience",
+        "operations leaders",
+        "--goal",
+        "Book demos",
+        "--offer",
+        "workflow automation platform",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    acme_dir = Path(acme["projectDir"])
+    beta_dir = Path(beta["projectDir"])
+    workspace_dir = tmp_path / "workspace"
+    run_script("create-campaign", "--project-dir", str(acme_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+    plan = run_script("create-budget-plan", "--project-dir", str(acme_dir), "--budget", "2000", "--period", "2026-Q2")
+    run_script(
+        "record-spend",
+        "--project-dir",
+        str(acme_dir),
+        "--plan-id",
+        plan["budgetPlan"]["id"],
+        "--channel",
+        "LinkedIn",
+        "--metrics",
+        "spend=800,revenue=1600,leads=5,conversions=1",
+    )
+    run_script("budget-report", "--project-dir", str(acme_dir), "--plan-id", plan["budgetPlan"]["id"], "--period", "2026-Q2")
+    run_script("register-brand", "--workspace-dir", str(workspace_dir), "--project-dir", str(acme_dir), "--owner", "Jane")
+    run_script("register-brand", "--workspace-dir", str(workspace_dir), "--project-dir", str(beta_dir), "--owner", "Max")
+
+    review = run_script("portfolio-budget-review", "--workspace-dir", str(workspace_dir), "--period", "2026-Q2")
+
+    review_md = Path(review["budgetReviewPath"]).read_text(encoding="utf-8")
+    workspace_state = json.loads((workspace_dir / "docs" / "hermes-marketing-workspace.json").read_text(encoding="utf-8"))
+    assert review["ok"] is True
+    assert review["budgetReview"]["brandCount"] == 2
+    assert review["budgetReview"]["totalBudget"] == 2000.0
+    assert review["budgetReview"]["totalSpend"] == 800.0
+    assert "Portfolio Budget Review" in review_md
+    assert "Acme LiDAR" in review_md
+    assert "Create a budget plan for Beta AI." in review_md
+    assert workspace_state["workflowState"] == "budget_review_ready"

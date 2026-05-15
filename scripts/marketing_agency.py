@@ -12,9 +12,11 @@ evidence capture. Phase 9 adds saved monitoring queries, monitor schedule
 handoffs, alert reports, and weekly digest generation. Phase 10 adds
 multi-brand workspace registry, governance defaults, portfolio summaries, and
 cross-brand digests. Phase 11 adds campaign experiment plans, variant result
-tracking, winner recommendations, and experiment history. It avoids network
-access and does not publish, message, email, update CRM records, schedule
-external jobs, or modify external systems.
+tracking, winner recommendations, and experiment history. Phase 12 adds
+budget plans, spend/result snapshots, ROI/CAC summaries, and portfolio budget
+review. It avoids network access and does not publish, message, email, update
+CRM records, schedule external jobs, modify external systems, or change live
+budgets.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ INTEGRATIONS_DIR = Path("docs") / "integrations"
 MONITORING_DIR = Path("docs") / "monitoring"
 PORTFOLIO_DIR = Path("docs") / "portfolio"
 EXPERIMENTS_DIR = Path("docs") / "experiments"
+BUDGET_DIR = Path("docs") / "budget"
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,9 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("experiments", [])
     data.setdefault("experimentResults", [])
     data.setdefault("experimentReports", [])
+    data.setdefault("budgetPlans", [])
+    data.setdefault("spendSnapshots", [])
+    data.setdefault("budgetReports", [])
     return data
 
 
@@ -149,6 +155,9 @@ def default_state() -> dict[str, Any]:
         "experiments": [],
         "experimentResults": [],
         "experimentReports": [],
+        "budgetPlans": [],
+        "spendSnapshots": [],
+        "budgetReports": [],
     }
 
 
@@ -171,6 +180,7 @@ def read_workspace_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("portfolioSummaries", [])
     data.setdefault("crossBrandDigests", [])
     data.setdefault("experimentHistories", [])
+    data.setdefault("budgetReviews", [])
     return data
 
 
@@ -182,6 +192,7 @@ def default_workspace_state() -> dict[str, Any]:
         "portfolioSummaries": [],
         "crossBrandDigests": [],
         "experimentHistories": [],
+        "budgetReviews": [],
     }
 
 
@@ -1228,6 +1239,123 @@ def portfolio_experiment_history(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def create_budget_plan(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    campaign = select_campaign(state, args.campaign)
+    plan = build_budget_plan(
+        state,
+        campaign=campaign,
+        name=args.name,
+        budget=args.budget,
+        period=args.period,
+        channels=parse_list(args.channels),
+        owner=args.owner,
+        goal=args.goal,
+    )
+    plans = upsert_by_id([item for item in state.get("budgetPlans", []) if isinstance(item, dict)], plan)
+    plan_path = project_dir / BUDGET_DIR / "budget-plans.md"
+    plan_json_path = project_dir / BUDGET_DIR / "budget-plans.json"
+    write_text(plan_path, render_budget_plans_markdown(plans))
+    write_text(plan_json_path, json.dumps(plans, indent=2))
+    record_budget_plan(project_dir, plan)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "budgetPlan": plan,
+        "budgetPlansPath": str(plan_path),
+        "budgetPlansJsonPath": str(plan_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Record spend/results with record-spend, then generate budget-report.",
+    }
+
+
+def record_spend(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    plan = select_budget_plan(state, args.plan_id)
+    if not plan:
+        return {"ok": False, "error": "No budget plan found. Run create-budget-plan first."}
+    snapshot = build_spend_snapshot(
+        plan,
+        channel=args.channel,
+        period=args.period,
+        metrics=parse_metrics(args.metrics),
+        notes=args.notes,
+    )
+    snapshots = [item for item in state.get("spendSnapshots", []) if isinstance(item, dict)]
+    snapshots.append(snapshot)
+    snapshots_path = project_dir / BUDGET_DIR / "spend-snapshots.md"
+    snapshots_json_path = project_dir / BUDGET_DIR / "spend-snapshots.json"
+    write_text(snapshots_path, render_spend_snapshots_markdown(snapshots))
+    write_text(snapshots_json_path, json.dumps(snapshots, indent=2))
+    record_spend_snapshot(project_dir, snapshot)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "spendSnapshot": snapshot,
+        "spendSnapshotsPath": str(snapshots_path),
+        "spendSnapshotsJsonPath": str(snapshots_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Generate budget-report to compare spend, CAC, ROI, and allocation recommendations.",
+    }
+
+
+def budget_report(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    plan = select_budget_plan(state, args.plan_id)
+    if not plan:
+        return {"ok": False, "error": "No budget plan found. Run create-budget-plan first."}
+    report = build_budget_report(state, plan=plan, period=args.period)
+    report_path = project_dir / BUDGET_DIR / "budget-report.md"
+    report_json_path = project_dir / BUDGET_DIR / "budget-report.json"
+    write_text(report_path, render_budget_report_markdown(report))
+    write_text(report_json_path, json.dumps(report, indent=2))
+    record_budget_report(project_dir, report)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "budgetReport": report,
+        "budgetReportPath": str(report_path),
+        "budgetReportJsonPath": str(report_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Budget report generated from local spend/result snapshots.",
+    }
+
+
+def portfolio_budget_review(args: argparse.Namespace) -> dict[str, Any]:
+    workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    brands = [item for item in workspace.get("brands", []) if isinstance(item, dict)]
+    if not brands:
+        return {"ok": False, "error": "No registered brands found. Run register-brand first."}
+    review = build_portfolio_budget_review(workspace, period=args.period)
+    review_path = workspace_dir / PORTFOLIO_DIR / "budget-review.md"
+    review_json_path = workspace_dir / PORTFOLIO_DIR / "budget-review.json"
+    write_text(review_path, render_portfolio_budget_review_markdown(review))
+    write_text(review_json_path, json.dumps(review, indent=2))
+    record_portfolio_budget_review(workspace_dir, review)
+    return {
+        "ok": True,
+        "workspaceDir": str(workspace_dir),
+        "budgetReview": review,
+        "budgetReviewPath": str(review_path),
+        "budgetReviewJsonPath": str(review_json_path),
+        "workspaceStatePath": str(workspace_dir / WORKSPACE_STATE_PATH),
+        "message": "Portfolio budget review generated from registered local brand projects.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -1287,6 +1415,16 @@ def select_experiment(state: dict[str, Any], experiment_id: str) -> dict[str, An
     for experiment in experiments:
         if str(experiment.get("id", "")) == experiment_id:
             return experiment
+    return {}
+
+
+def select_budget_plan(state: dict[str, Any], plan_id: str) -> dict[str, Any]:
+    plans = [item for item in state.get("budgetPlans", []) if isinstance(item, dict)]
+    if not plan_id and plans:
+        return plans[-1]
+    for plan in plans:
+        if str(plan.get("id", "")) == plan_id:
+            return plan
     return {}
 
 
@@ -2752,6 +2890,8 @@ def build_portfolio_summary(workspace: dict[str, Any], *, period: str) -> dict[s
         "weeklyDigests": sum(int(row.get("weeklyDigests", 0)) for row in rows),
         "experiments": sum(int(row.get("experiments", 0)) for row in rows),
         "experimentReports": sum(int(row.get("experimentReports", 0)) for row in rows),
+        "budgetPlans": sum(int(row.get("budgetPlans", 0)) for row in rows),
+        "budgetReports": sum(int(row.get("budgetReports", 0)) for row in rows),
     }
     return {
         "type": "portfolio-summary",
@@ -2784,6 +2924,8 @@ def portfolio_brand_row(item: dict[str, Any]) -> dict[str, Any]:
         "weeklyDigests": len(state.get("weeklyDigests", [])),
         "experiments": len(state.get("experiments", [])),
         "experimentReports": len(state.get("experimentReports", [])),
+        "budgetPlans": len(state.get("budgetPlans", [])),
+        "budgetReports": len(state.get("budgetReports", [])),
         "highAlerts": int(alert_summary.get("high", 0) or 0),
         "latestCampaign": (state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}).get("name", brand.get("latestCampaign", "")),
         "defaultChannels": governance.get("defaultChannels", brand.get("channels", [])),
@@ -2832,6 +2974,7 @@ def build_cross_brand_digest(workspace: dict[str, Any], *, period: str, audience
                 "latestLead": state.get("lastLeadScorecard", {}) if isinstance(state.get("lastLeadScorecard"), dict) else {},
                 "latestAlert": state.get("lastMonitorAlert", {}) if isinstance(state.get("lastMonitorAlert"), dict) else {},
                 "latestExperimentReport": state.get("lastExperimentReport", {}) if isinstance(state.get("lastExperimentReport"), dict) else {},
+                "latestBudgetReport": state.get("lastBudgetReport", {}) if isinstance(state.get("lastBudgetReport"), dict) else {},
             }
         )
     return {
@@ -2859,6 +3002,9 @@ def cross_brand_highlights(rows: list[dict[str, Any]]) -> list[str]:
     total_experiments = sum(int(row.get("experiments", 0) or 0) for row in rows)
     if total_experiments:
         highlights.append(f"{total_experiments} experiments are tracked across brands.")
+    total_budget_reports = sum(int(row.get("budgetReports", 0) or 0) for row in rows)
+    if total_budget_reports:
+        highlights.append(f"{total_budget_reports} budget reports are available across brands.")
     if not highlights:
         highlights.append("No cross-brand activity has been recorded yet.")
     return highlights
@@ -3044,6 +3190,241 @@ def portfolio_experiment_recommendations(rows: list[dict[str, Any]]) -> list[str
     return unique_list(recommendations) or ["Continue experiment reviews across registered brands."]
 
 
+def build_budget_plan(
+    state: dict[str, Any],
+    *,
+    campaign: dict[str, Any],
+    name: str,
+    budget: float,
+    period: str,
+    channels: list[str],
+    owner: str,
+    goal: str,
+) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    active_channels = channels or [str(channel) for channel in campaign.get("channels", []) if str(channel).strip()] or [str(channel) for channel in strategy.get("channels", [])[:3]]
+    active_budget = max(0.0, float(budget or 0.0))
+    allocation = budget_allocations(active_channels, active_budget)
+    plan_id = slugify(f"budget-{campaign.get('slug') or strategy.get('brand') or name}-{period or name}", fallback="budget-plan")
+    return {
+        "type": "budget-plan",
+        "id": plan_id,
+        "brand": strategy.get("brand", ""),
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "name": name.strip() or "Campaign budget plan",
+        "period": period or "latest period",
+        "owner": owner,
+        "goal": goal or campaign.get("objective") or strategy.get("goal", ""),
+        "totalBudget": active_budget,
+        "currency": "USD",
+        "allocations": allocation,
+        "guardrails": [
+            "Do not change live ad spend without explicit approval.",
+            "Review CAC, ROI, and lead quality before increasing budget.",
+            "Shift budget gradually unless there is a clear tracking or compliance issue.",
+        ],
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def budget_allocations(channels: list[str], total_budget: float) -> list[dict[str, Any]]:
+    if not channels:
+        channels = ["LinkedIn", "SEO blog", "Email"]
+    weights = []
+    for channel in channels:
+        lowered = channel.lower()
+        if any(word in lowered for word in ("linkedin", "google", "paid", "ad")):
+            weight = 1.4
+        elif any(word in lowered for word in ("seo", "blog", "content")):
+            weight = 1.2
+        elif any(word in lowered for word in ("email", "crm")):
+            weight = 0.9
+        else:
+            weight = 1.0
+        weights.append((channel, weight))
+    total_weight = sum(weight for _, weight in weights) or 1.0
+    return [
+        {
+            "channel": channel,
+            "weight": weight,
+            "allocatedBudget": round(total_budget * weight / total_weight, 2),
+            "rationale": budget_allocation_rationale(channel),
+        }
+        for channel, weight in weights
+    ]
+
+
+def budget_allocation_rationale(channel: str) -> str:
+    lowered = channel.lower()
+    if any(word in lowered for word in ("linkedin", "google", "paid", "ad")):
+        return "Paid or high-intent channel; track CAC closely before scaling."
+    if any(word in lowered for word in ("seo", "blog", "content")):
+        return "Compounding channel; fund production and optimization."
+    if any(word in lowered for word in ("email", "crm")):
+        return "Nurture channel; usually lower spend but important for conversion."
+    return "Test allocation; compare against lead quality and downstream ROI."
+
+
+def build_spend_snapshot(
+    plan: dict[str, Any],
+    *,
+    channel: str,
+    period: str,
+    metrics: dict[str, float],
+    notes: str,
+) -> dict[str, Any]:
+    normalized = normalize_metrics(metrics)
+    derived = derive_budget_metrics(normalized)
+    return {
+        "type": "spend-snapshot",
+        "id": slugify(f"spend-{plan.get('id', '')}-{channel}-{period}-{datetime.now(timezone.utc).isoformat()}", fallback="spend-snapshot"),
+        "planId": plan.get("id", ""),
+        "campaign": plan.get("campaign", ""),
+        "channel": channel or "all channels",
+        "period": period or plan.get("period", "latest period"),
+        "metrics": normalized,
+        "derivedMetrics": derived,
+        "notes": notes.strip(),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def derive_budget_metrics(metrics: dict[str, float]) -> dict[str, float]:
+    derived = derive_performance_metrics(metrics)
+    spend = metrics.get("spend", 0.0)
+    revenue = metrics.get("revenue", 0.0)
+    leads = metrics.get("leads", 0.0)
+    conversions = metrics.get("conversions", 0.0)
+    derived.update(
+        {
+            "cac": safe_ratio(spend, conversions),
+            "costPerLead": safe_ratio(spend, leads),
+            "roi": safe_ratio(revenue - spend, spend),
+            "profit": round(revenue - spend, 2),
+        }
+    )
+    return derived
+
+
+def build_budget_report(state: dict[str, Any], *, plan: dict[str, Any], period: str) -> dict[str, Any]:
+    snapshots = [
+        item
+        for item in state.get("spendSnapshots", [])
+        if isinstance(item, dict) and item.get("planId") == plan.get("id")
+    ]
+    totals = aggregate_budget_snapshots(snapshots)
+    by_channel = aggregate_budget_by_channel(snapshots)
+    return {
+        "type": "budget-report",
+        "id": slugify(f"budget-report-{plan.get('id', '')}-{period}", fallback="budget-report"),
+        "planId": plan.get("id", ""),
+        "brand": plan.get("brand", ""),
+        "campaign": plan.get("campaign", ""),
+        "period": period or plan.get("period", "latest period"),
+        "totalBudget": plan.get("totalBudget", 0.0),
+        "totalSpend": totals["metrics"].get("spend", 0.0),
+        "remainingBudget": round(float(plan.get("totalBudget", 0.0) or 0.0) - totals["metrics"].get("spend", 0.0), 2),
+        "totals": totals,
+        "byChannel": by_channel,
+        "recommendations": budget_recommendations(plan, totals, by_channel),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def aggregate_budget_snapshots(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    totals = normalize_metrics({})
+    for snapshot in snapshots:
+        metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+        for key in totals:
+            totals[key] += float(metrics.get(key, 0.0) or 0.0)
+    return {"metrics": totals, "derivedMetrics": derive_budget_metrics(totals), "snapshotCount": len(snapshots)}
+
+
+def aggregate_budget_by_channel(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[str, dict[str, float]] = {}
+    for snapshot in snapshots:
+        channel = str(snapshot.get("channel") or "all channels")
+        bucket = buckets.setdefault(channel, normalize_metrics({}))
+        metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+        for key in bucket:
+            bucket[key] += float(metrics.get(key, 0.0) or 0.0)
+    return [
+        {"channel": channel, "metrics": metrics, "derivedMetrics": derive_budget_metrics(metrics)}
+        for channel, metrics in sorted(buckets.items())
+    ]
+
+
+def budget_recommendations(plan: dict[str, Any], totals: dict[str, Any], by_channel: list[dict[str, Any]]) -> list[str]:
+    metrics = totals.get("metrics", {}) if isinstance(totals.get("metrics"), dict) else {}
+    derived = totals.get("derivedMetrics", {}) if isinstance(totals.get("derivedMetrics"), dict) else {}
+    recommendations = []
+    total_budget = float(plan.get("totalBudget", 0.0) or 0.0)
+    spend = float(metrics.get("spend", 0.0) or 0.0)
+    if total_budget and spend > total_budget:
+        recommendations.append("Pause budget increases because spend is above the planned budget.")
+    if spend > 0 and derived.get("roi", 0.0) < 0:
+        recommendations.append("Review offer, audience, and landing path before scaling negative-ROI spend.")
+    winners = sorted(by_channel, key=lambda item: float(item.get("derivedMetrics", {}).get("roi", 0.0) or 0.0), reverse=True)
+    if winners:
+        recommendations.append(f"Best ROI channel so far: {winners[0].get('channel', '')}. Review lead quality before reallocating.")
+    if metrics.get("leads", 0.0) and derived.get("costPerLead", 0.0):
+        recommendations.append(f"Current cost per lead is {derived.get('costPerLead', 0.0):.2f}; compare this against sales conversion quality.")
+    if not recommendations:
+        recommendations.append("Record more spend/result snapshots before changing allocation.")
+    return recommendations
+
+
+def build_portfolio_budget_review(workspace: dict[str, Any], *, period: str) -> dict[str, Any]:
+    brand_states = load_registered_brand_states(workspace)
+    rows = []
+    for item in brand_states:
+        brand = item.get("brand", {}) if isinstance(item.get("brand"), dict) else {}
+        state = item.get("state", {}) if isinstance(item.get("state"), dict) else {}
+        reports = [report for report in state.get("budgetReports", []) if isinstance(report, dict)]
+        latest = reports[-1] if reports else {}
+        rows.append(
+            {
+                "brandId": brand.get("id", ""),
+                "brand": brand.get("brand", ""),
+                "projectDir": brand.get("projectDir", ""),
+                "budgetPlanCount": len(state.get("budgetPlans", [])),
+                "spendSnapshotCount": len(state.get("spendSnapshots", [])),
+                "reportCount": len(reports),
+                "latestReport": latest,
+                "totalBudget": float(latest.get("totalBudget", 0.0) or 0.0),
+                "totalSpend": float(latest.get("totalSpend", 0.0) or 0.0),
+                "roi": float((latest.get("totals", {}).get("derivedMetrics", {}) if isinstance(latest.get("totals"), dict) else {}).get("roi", 0.0) or 0.0),
+            }
+        )
+    total_budget = sum(row["totalBudget"] for row in rows)
+    total_spend = sum(row["totalSpend"] for row in rows)
+    return {
+        "type": "portfolio-budget-review",
+        "period": period or "latest period",
+        "brandCount": len(rows),
+        "totalBudget": round(total_budget, 2),
+        "totalSpend": round(total_spend, 2),
+        "remainingBudget": round(total_budget - total_spend, 2),
+        "brands": rows,
+        "recommendations": portfolio_budget_recommendations(rows),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def portfolio_budget_recommendations(rows: list[dict[str, Any]]) -> list[str]:
+    recommendations = []
+    for row in rows:
+        if not row.get("budgetPlanCount"):
+            recommendations.append(f"Create a budget plan for {row.get('brand', 'the brand')}.")
+        elif not row.get("reportCount"):
+            recommendations.append(f"Generate a budget report for {row.get('brand', 'the brand')}.")
+        elif row.get("roi", 0.0) < 0:
+            recommendations.append(f"Review negative ROI spend for {row.get('brand', 'the brand')}.")
+    return unique_list(recommendations) or ["Continue weekly budget review and compare spend against lead quality."]
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -3162,8 +3543,16 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     if experiment_report_data.get("winner"):
         winner = experiment_report_data.get("winner", {}) if isinstance(experiment_report_data.get("winner"), dict) else {}
         lines.append(f"Experiment winner: `{winner.get('variant', '')}` confidence `{experiment_report_data.get('confidence', '')}`")
+    budget_plan = state.get("lastBudgetPlan", {}) if isinstance(state.get("lastBudgetPlan"), dict) else {}
+    if budget_plan.get("id"):
+        lines.append(f"Budget plan: `{budget_plan.get('name')}` total `{budget_plan.get('totalBudget', 0):.2f}`")
+    budget_report_data = state.get("lastBudgetReport", {}) if isinstance(state.get("lastBudgetReport"), dict) else {}
+    if budget_report_data.get("id"):
+        totals = budget_report_data.get("totals", {}) if isinstance(budget_report_data.get("totals"), dict) else {}
+        derived = totals.get("derivedMetrics", {}) if isinstance(totals.get("derivedMetrics"), dict) else {}
+        lines.append(f"Budget report: spend `{budget_report_data.get('totalSpend', 0):.2f}`, ROI `{percent(derived.get('roi', 0))}`")
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, prepare integration handoff, monitor market signals, or run experiments.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, prepare integration handoff, monitor market signals, run experiments, or plan budget.")
     return "\n".join(lines)
 
 
@@ -3393,6 +3782,30 @@ def record_experiment_report(project_dir: Path, report: dict[str, Any]) -> None:
     write_state(project_dir, state)
 
 
+def record_budget_plan(project_dir: Path, plan: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state["budgetPlans"] = upsert_by_id([item for item in state.get("budgetPlans", []) if isinstance(item, dict)], plan)
+    state["lastBudgetPlan"] = plan
+    state["workflowState"] = "budget_plan_ready"
+    write_state(project_dir, state)
+
+
+def record_spend_snapshot(project_dir: Path, snapshot: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("spendSnapshots", []).append(snapshot)
+    state["lastSpendSnapshot"] = snapshot
+    state["workflowState"] = "spend_snapshot_recorded"
+    write_state(project_dir, state)
+
+
+def record_budget_report(project_dir: Path, report: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("budgetReports", []).append(report)
+    state["lastBudgetReport"] = report
+    state["workflowState"] = "budget_report_ready"
+    write_state(project_dir, state)
+
+
 def record_brand_registration(workspace_dir: Path, brand: dict[str, Any], governance: dict[str, Any]) -> None:
     workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
     workspace["brands"] = upsert_by_id([item for item in workspace.get("brands", []) if isinstance(item, dict)], brand)
@@ -3432,6 +3845,14 @@ def record_portfolio_experiment_history(workspace_dir: Path, history: dict[str, 
     workspace.setdefault("experimentHistories", []).append(history)
     workspace["lastExperimentHistory"] = history
     workspace["workflowState"] = "experiment_history_ready"
+    write_workspace_state(workspace_dir, workspace)
+
+
+def record_portfolio_budget_review(workspace_dir: Path, review: dict[str, Any]) -> None:
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    workspace.setdefault("budgetReviews", []).append(review)
+    workspace["lastBudgetReview"] = review
+    workspace["workflowState"] = "budget_review_ready"
     write_workspace_state(workspace_dir, workspace)
 
 
@@ -4542,6 +4963,7 @@ def render_portfolio_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Lead scorecards: {totals.get('leadScorecards', 0)}",
         f"- Monitor alerts: {totals.get('monitorAlerts', 0)}",
         f"- Experiments: {totals.get('experiments', 0)}",
+        f"- Budget plans: {totals.get('budgetPlans', 0)}",
         "",
         "## Brands",
     ]
@@ -4556,6 +4978,7 @@ def render_portfolio_summary_markdown(summary: dict[str, Any]) -> str:
                 f"- Leads: {brand.get('leadScorecards', 0)}",
                 f"- Alerts: {brand.get('monitorAlerts', 0)}",
                 f"- Experiments: {brand.get('experiments', 0)}",
+                f"- Budget plans: {brand.get('budgetPlans', 0)}",
                 f"- Latest campaign: {brand.get('latestCampaign', '')}",
                 "",
             ]
@@ -4584,6 +5007,7 @@ def render_cross_brand_digest_markdown(digest: dict[str, Any]) -> str:
         latest_performance = brand.get("latestPerformance", {}) if isinstance(brand.get("latestPerformance"), dict) else {}
         latest_experiment = brand.get("latestExperimentReport", {}) if isinstance(brand.get("latestExperimentReport"), dict) else {}
         winner = latest_experiment.get("winner", {}) if isinstance(latest_experiment.get("winner"), dict) else {}
+        latest_budget = brand.get("latestBudgetReport", {}) if isinstance(brand.get("latestBudgetReport"), dict) else {}
         derived = latest_performance.get("derivedMetrics", {}) if isinstance(latest_performance.get("derivedMetrics"), dict) else {}
         lines.extend(
             [
@@ -4594,6 +5018,7 @@ def render_cross_brand_digest_markdown(digest: dict[str, Any]) -> str:
                 f"- Latest alert: {latest_alert.get('title', '')}",
                 f"- Latest lead: {latest_lead.get('company') or latest_lead.get('name') or ''}",
                 f"- Latest experiment winner: {winner.get('variant', '')}",
+                f"- Latest budget spend: {latest_budget.get('totalSpend', 0):.2f}",
                 f"- Latest CTR: {percent(derived.get('ctr', 0))}",
                 "",
             ]
@@ -4705,6 +5130,112 @@ def render_portfolio_experiment_history_markdown(history: dict[str, Any]) -> str
             ]
         )
     lines.extend(["## Recommendations", *[f"- {item}" for item in history.get("recommendations", [])]])
+    return "\n".join(lines)
+
+
+def render_budget_plans_markdown(plans: list[dict[str, Any]]) -> str:
+    lines = ["# Budget Plans", "", "- Status: planning artifacts only; changing live spend requires approval.", ""]
+    for plan in plans:
+        lines.extend(
+            [
+                f"## {plan.get('name', '')}",
+                "",
+                f"- Plan ID: {plan.get('id', '')}",
+                f"- Brand: {plan.get('brand', '')}",
+                f"- Campaign: {plan.get('campaign', '')}",
+                f"- Period: {plan.get('period', '')}",
+                f"- Owner: {plan.get('owner', '')}",
+                f"- Total budget: {plan.get('totalBudget', 0):.2f} {plan.get('currency', 'USD')}",
+                f"- Goal: {plan.get('goal', '')}",
+                "",
+                "### Channel Allocation",
+            ]
+        )
+        for allocation in plan.get("allocations", []):
+            lines.append(f"- {allocation.get('channel', '')}: {allocation.get('allocatedBudget', 0):.2f} - {allocation.get('rationale', '')}")
+        lines.extend(["", "### Guardrails", *[f"- {item}" for item in plan.get("guardrails", [])], ""])
+    return "\n".join(lines)
+
+
+def render_spend_snapshots_markdown(snapshots: list[dict[str, Any]]) -> str:
+    lines = ["# Spend Snapshots", "", "- Source: manually supplied or imported spend/result metrics.", ""]
+    for snapshot in snapshots:
+        metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+        derived = snapshot.get("derivedMetrics", {}) if isinstance(snapshot.get("derivedMetrics"), dict) else {}
+        lines.extend(
+            [
+                f"## {snapshot.get('channel', '')} - {snapshot.get('period', '')}",
+                "",
+                f"- Plan ID: {snapshot.get('planId', '')}",
+                f"- Spend: {metrics.get('spend', 0):.2f}",
+                f"- Revenue: {metrics.get('revenue', 0):.2f}",
+                f"- Leads: {metrics.get('leads', 0):.0f}",
+                f"- Conversions: {metrics.get('conversions', 0):.0f}",
+                f"- Cost per lead: {derived.get('costPerLead', 0):.2f}",
+                f"- CAC: {derived.get('cac', 0):.2f}",
+                f"- ROI: {percent(derived.get('roi', 0))}",
+                "",
+            ]
+        )
+        if snapshot.get("notes"):
+            lines.extend(["### Notes", str(snapshot.get("notes", "")), ""])
+    return "\n".join(lines)
+
+
+def render_budget_report_markdown(report: dict[str, Any]) -> str:
+    totals = report.get("totals", {}) if isinstance(report.get("totals"), dict) else {}
+    metrics = totals.get("metrics", {}) if isinstance(totals.get("metrics"), dict) else {}
+    derived = totals.get("derivedMetrics", {}) if isinstance(totals.get("derivedMetrics"), dict) else {}
+    lines = [
+        f"# Budget Report: {report.get('campaign') or report.get('brand')}",
+        "",
+        f"- Period: {report.get('period', '')}",
+        f"- Total budget: {report.get('totalBudget', 0):.2f}",
+        f"- Total spend: {report.get('totalSpend', 0):.2f}",
+        f"- Remaining budget: {report.get('remainingBudget', 0):.2f}",
+        f"- Revenue: {metrics.get('revenue', 0):.2f}",
+        f"- Leads: {metrics.get('leads', 0):.0f}",
+        f"- Conversions: {metrics.get('conversions', 0):.0f}",
+        f"- Cost per lead: {derived.get('costPerLead', 0):.2f}",
+        f"- CAC: {derived.get('cac', 0):.2f}",
+        f"- ROI: {percent(derived.get('roi', 0))}",
+        "",
+        "## Channels",
+    ]
+    for item in report.get("byChannel", []):
+        item_metrics = item.get("metrics", {}) if isinstance(item.get("metrics"), dict) else {}
+        item_derived = item.get("derivedMetrics", {}) if isinstance(item.get("derivedMetrics"), dict) else {}
+        lines.append(f"- {item.get('channel', '')}: spend {item_metrics.get('spend', 0):.2f}, leads {item_metrics.get('leads', 0):.0f}, ROI {percent(item_derived.get('roi', 0))}")
+    lines.extend(["", "## Recommendations", *[f"- {item}" for item in report.get("recommendations", [])]])
+    return "\n".join(lines)
+
+
+def render_portfolio_budget_review_markdown(review: dict[str, Any]) -> str:
+    lines = [
+        "# Portfolio Budget Review",
+        "",
+        f"- Period: {review.get('period', '')}",
+        f"- Brands: {review.get('brandCount', 0)}",
+        f"- Total budget: {review.get('totalBudget', 0):.2f}",
+        f"- Total spend: {review.get('totalSpend', 0):.2f}",
+        f"- Remaining budget: {review.get('remainingBudget', 0):.2f}",
+        "",
+        "## Brands",
+    ]
+    for row in review.get("brands", []):
+        lines.extend(
+            [
+                f"### {row.get('brand', '')}",
+                f"- Budget plans: {row.get('budgetPlanCount', 0)}",
+                f"- Spend snapshots: {row.get('spendSnapshotCount', 0)}",
+                f"- Reports: {row.get('reportCount', 0)}",
+                f"- Total budget: {row.get('totalBudget', 0):.2f}",
+                f"- Total spend: {row.get('totalSpend', 0):.2f}",
+                f"- ROI: {percent(row.get('roi', 0))}",
+                "",
+            ]
+        )
+    lines.extend(["## Recommendations", *[f"- {item}" for item in review.get("recommendations", [])]])
     return "\n".join(lines)
 
 
@@ -4990,6 +5521,37 @@ def build_parser() -> argparse.ArgumentParser:
     experiment_history.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
     experiment_history.add_argument("--period", default="latest period", help="Portfolio experiment reporting period.")
     experiment_history.set_defaults(func=portfolio_experiment_history)
+
+    budget = subparsers.add_parser("create-budget-plan", help="Create a campaign budget plan and channel allocation.")
+    budget.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    budget.add_argument("--campaign", default="", help="Campaign slug. Defaults to latest campaign.")
+    budget.add_argument("--name", default="Campaign budget plan", help="Budget plan name.")
+    budget.add_argument("--budget", type=float, required=True, help="Total budget amount.")
+    budget.add_argument("--period", default="latest period", help="Budget period.")
+    budget.add_argument("--channels", default="", help="Comma-separated channels. Defaults to campaign/strategy channels.")
+    budget.add_argument("--owner", default="", help="Budget owner.")
+    budget.add_argument("--goal", default="", help="Budget goal override.")
+    budget.set_defaults(func=create_budget_plan)
+
+    spend = subparsers.add_parser("record-spend", help="Record spend and result metrics for one channel.")
+    spend.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    spend.add_argument("--plan-id", default="", help="Budget plan ID. Defaults to latest budget plan.")
+    spend.add_argument("--channel", required=True, help="Channel for the spend snapshot.")
+    spend.add_argument("--period", default="latest period", help="Spend/result period.")
+    spend.add_argument("--metrics", required=True, help="Comma-separated metrics, such as spend=500,revenue=1200,leads=6,conversions=2.")
+    spend.add_argument("--notes", default="", help="Spend/result notes.")
+    spend.set_defaults(func=record_spend)
+
+    budget_report_parser = subparsers.add_parser("budget-report", help="Generate budget ROI/CAC report from spend snapshots.")
+    budget_report_parser.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    budget_report_parser.add_argument("--plan-id", default="", help="Budget plan ID. Defaults to latest budget plan.")
+    budget_report_parser.add_argument("--period", default="latest period", help="Budget reporting period.")
+    budget_report_parser.set_defaults(func=budget_report)
+
+    budget_review = subparsers.add_parser("portfolio-budget-review", help="Generate portfolio budget review across registered brands.")
+    budget_review.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
+    budget_review.add_argument("--period", default="latest period", help="Portfolio budget review period.")
+    budget_review.set_defaults(func=portfolio_budget_review)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

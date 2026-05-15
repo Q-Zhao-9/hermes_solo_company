@@ -635,12 +635,80 @@ Experiment reports recommend winners from local metrics only. They do not
 publish variants, modify ads, edit production pages, send emails, or change
 external campaign settings.
 
-## Phase 12 Preview
+## What Phase 12 Adds
 
-The next large phase can add budget and ROI planning:
+Phase 12 adds budget and ROI planning:
 
 - campaign budget plans
 - channel allocation recommendations
 - spend/result snapshots
 - ROI and CAC summaries
 - portfolio budget review
+
+Create a campaign budget plan:
+
+```bash
+scripts/marketing_agency.py create-budget-plan \
+  --project-dir generated-marketing/acme-lidar \
+  --name "Q2 demand budget" \
+  --budget 3000 \
+  --period "2026-Q2" \
+  --channels "LinkedIn,SEO blog,Email"
+```
+
+Record spend and results:
+
+```bash
+scripts/marketing_agency.py record-spend \
+  --project-dir generated-marketing/acme-lidar \
+  --plan-id "<budget plan id>" \
+  --channel LinkedIn \
+  --period "2026-W21" \
+  --metrics "spend=1000,revenue=2400,leads=8,conversions=2"
+```
+
+Generate a budget report:
+
+```bash
+scripts/marketing_agency.py budget-report \
+  --project-dir generated-marketing/acme-lidar \
+  --plan-id "<budget plan id>" \
+  --period "2026-Q2"
+```
+
+Generate portfolio budget review:
+
+```bash
+scripts/marketing_agency.py portfolio-budget-review \
+  --workspace-dir generated-marketing \
+  --period "2026-Q2"
+```
+
+Phase 12 writes:
+
+```text
+docs/budget/budget-plans.md
+docs/budget/budget-plans.json
+docs/budget/spend-snapshots.md
+docs/budget/spend-snapshots.json
+docs/budget/budget-report.md
+docs/budget/budget-report.json
+docs/portfolio/budget-review.md
+docs/portfolio/budget-review.json
+docs/hermes-marketing-state.json
+docs/hermes-marketing-workspace.json
+```
+
+Budget reports recommend allocation changes from local metrics only. They do
+not change live ad budgets, billing, external campaign settings, or platform
+configuration.
+
+## Phase 13 Preview
+
+The next large phase can add CRM pipeline and revenue attribution:
+
+- opportunity stage tracking
+- campaign-to-lead attribution
+- revenue influence reports
+- follow-up SLA review
+- portfolio sales pipeline summary
