@@ -500,11 +500,78 @@ The monitor schedule is a local handoff file only. Phase 9 does not browse,
 start a real scheduler, call social APIs, reply to comments, send outreach, or
 update CRM records.
 
-## Phase 10 Preview
+## What Phase 10 Adds
 
-The next large phase can add multi-brand workspace support:
+Phase 10 adds multi-brand workspace support:
 
 - brand/account registry
 - portfolio-level campaign summary
 - cross-brand weekly digest
 - brand-specific permissions and defaults
+
+Register a brand project:
+
+```bash
+scripts/marketing_agency.py register-brand \
+  --workspace-dir generated-marketing \
+  --project-dir generated-marketing/acme-lidar \
+  --owner "Jane" \
+  --channels "LinkedIn,SEO blog,Email" \
+  --approval-policy "Jane approval required before external action"
+```
+
+Update brand governance:
+
+```bash
+scripts/marketing_agency.py brand-governance \
+  --workspace-dir generated-marketing \
+  --brand-id acme-lidar \
+  --channels "LinkedIn,YouTube demos" \
+  --permissions "draft_content,capture_manual_evidence" \
+  --approval-policy "Founder approval required before publishing"
+```
+
+Generate portfolio summary:
+
+```bash
+scripts/marketing_agency.py portfolio-summary \
+  --workspace-dir generated-marketing \
+  --period "2026-W20"
+```
+
+Generate cross-brand digest:
+
+```bash
+scripts/marketing_agency.py cross-brand-digest \
+  --workspace-dir generated-marketing \
+  --period "2026-W20" \
+  --audience "executive team"
+```
+
+Phase 10 writes:
+
+```text
+docs/hermes-marketing-workspace.json
+docs/portfolio/brand-registry.md
+docs/portfolio/brand-registry.json
+docs/portfolio/brand-governance.md
+docs/portfolio/brand-governance.json
+docs/portfolio/portfolio-summary.md
+docs/portfolio/portfolio-summary.json
+docs/portfolio/cross-brand-digest.md
+docs/portfolio/cross-brand-digest.json
+```
+
+The workspace reads local brand project state and summarizes it. Governance is
+documentation only; it does not grant real platform permissions or bypass
+approval requirements.
+
+## Phase 11 Preview
+
+The next large phase can add campaign experiment management:
+
+- A/B test plans
+- experiment hypotheses
+- variant tracking
+- winner recommendations
+- experiment history per brand and portfolio

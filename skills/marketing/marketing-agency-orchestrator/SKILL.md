@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, monitoring-automation, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, monitoring-automation, multi-brand-workspace, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -96,6 +96,15 @@ scripts/marketing_agency.py record-monitor-alert --project-dir "<project dir>" -
 scripts/marketing_agency.py weekly-digest --project-dir "<project dir>" --period "<period>"
 ```
 
+Phase 10 supports multi-brand workspace management:
+
+```bash
+scripts/marketing_agency.py register-brand --workspace-dir "<workspace dir>" --project-dir "<brand project dir>" --owner "<owner>"
+scripts/marketing_agency.py brand-governance --workspace-dir "<workspace dir>" --brand-id "<brand>" --approval-policy "<policy>"
+scripts/marketing_agency.py portfolio-summary --workspace-dir "<workspace dir>" --period "<period>"
+scripts/marketing_agency.py cross-brand-digest --workspace-dir "<workspace dir>" --period "<period>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -118,6 +127,9 @@ scripts/marketing_agency.py weekly-digest --project-dir "<project dir>" --period
 - **Monitoring automation and digests**: use `monitoring-automation`,
   `create-monitor-query`, `schedule-monitor`, `record-monitor-alert`, and
   `weekly-digest`.
+- **Multi-brand workspace**: use `multi-brand-workspace`,
+  `register-brand`, `brand-governance`, `portfolio-summary`, and
+  `cross-brand-digest`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.

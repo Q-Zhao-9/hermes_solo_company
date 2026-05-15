@@ -9,9 +9,10 @@ dashboards. Phase 6 adds competitor intelligence and trend watch reports.
 Phase 7 adds approval packages, execution queues, change logs, and operator
 handoffs. Phase 8 adds platform integration handoff adapters and execution
 evidence capture. Phase 9 adds saved monitoring queries, monitor schedule
-handoffs, alert reports, and weekly digest generation. It avoids network
-access and does not publish, message, email, update CRM records, schedule
-external jobs, or modify external systems.
+handoffs, alert reports, and weekly digest generation. Phase 10 adds
+multi-brand workspace registry, governance defaults, portfolio summaries, and
+cross-brand digests. It avoids network access and does not publish, message,
+email, update CRM records, schedule external jobs, or modify external systems.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import Any
 
 
 STATE_PATH = Path("docs") / "hermes-marketing-state.json"
+WORKSPACE_STATE_PATH = Path("docs") / "hermes-marketing-workspace.json"
 CONTENT_DIR = Path("docs") / "content"
 SEO_DIR = Path("docs") / "seo"
 LEADS_DIR = Path("docs") / "leads"
@@ -36,6 +38,7 @@ COMPETITOR_DIR = Path("docs") / "competitors"
 EXECUTION_DIR = Path("docs") / "execution"
 INTEGRATIONS_DIR = Path("docs") / "integrations"
 MONITORING_DIR = Path("docs") / "monitoring"
+PORTFOLIO_DIR = Path("docs") / "portfolio"
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,37 @@ def default_state() -> dict[str, Any]:
 
 def write_state(project_dir: Path, state: dict[str, Any]) -> None:
     write_text(project_dir / STATE_PATH, json.dumps(state, indent=2))
+
+
+def read_workspace_state(state_file: Path) -> dict[str, Any]:
+    if not state_file.exists():
+        return default_workspace_state()
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return default_workspace_state()
+    if not isinstance(data, dict):
+        return default_workspace_state()
+    data.setdefault("version", 1)
+    data.setdefault("brands", [])
+    data.setdefault("brandGovernance", [])
+    data.setdefault("portfolioSummaries", [])
+    data.setdefault("crossBrandDigests", [])
+    return data
+
+
+def default_workspace_state() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "brands": [],
+        "brandGovernance": [],
+        "portfolioSummaries": [],
+        "crossBrandDigests": [],
+    }
+
+
+def write_workspace_state(workspace_dir: Path, state: dict[str, Any]) -> None:
+    write_text(workspace_dir / WORKSPACE_STATE_PATH, json.dumps(state, indent=2))
 
 
 def create_strategy(args: argparse.Namespace) -> dict[str, Any]:
@@ -939,6 +973,132 @@ def weekly_digest(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def register_brand(args: argparse.Namespace) -> dict[str, Any]:
+    workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    project_state = read_state(project_dir / STATE_PATH)
+    strategy = project_state.get("lastStrategy", {}) if isinstance(project_state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found in project. Run create-strategy first."}
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    brand = build_brand_registry_entry(
+        project_dir=project_dir,
+        project_state=project_state,
+        owner=args.owner,
+        status=args.status,
+        notes=args.notes,
+    )
+    governance = build_brand_governance(
+        brand,
+        channels=parse_list(args.channels),
+        permissions=parse_list(args.permissions),
+        approval_policy=args.approval_policy,
+        notes=args.notes,
+    )
+    brands = upsert_by_id([item for item in workspace.get("brands", []) if isinstance(item, dict)], brand)
+    governance_items = upsert_by_id([item for item in workspace.get("brandGovernance", []) if isinstance(item, dict)], governance)
+    registry_path = workspace_dir / PORTFOLIO_DIR / "brand-registry.md"
+    registry_json_path = workspace_dir / PORTFOLIO_DIR / "brand-registry.json"
+    governance_path = workspace_dir / PORTFOLIO_DIR / "brand-governance.md"
+    governance_json_path = workspace_dir / PORTFOLIO_DIR / "brand-governance.json"
+    write_text(registry_path, render_brand_registry_markdown(brands))
+    write_text(registry_json_path, json.dumps(brands, indent=2))
+    write_text(governance_path, render_brand_governance_markdown(governance_items))
+    write_text(governance_json_path, json.dumps(governance_items, indent=2))
+    record_brand_registration(workspace_dir, brand, governance)
+    return {
+        "ok": True,
+        "workspaceDir": str(workspace_dir),
+        "brand": brand,
+        "governance": governance,
+        "brandRegistryPath": str(registry_path),
+        "brandRegistryJsonPath": str(registry_json_path),
+        "brandGovernancePath": str(governance_path),
+        "brandGovernanceJsonPath": str(governance_json_path),
+        "workspaceStatePath": str(workspace_dir / WORKSPACE_STATE_PATH),
+        "next": "Register more brands, then run portfolio-summary or cross-brand-digest.",
+    }
+
+
+def brand_governance(args: argparse.Namespace) -> dict[str, Any]:
+    workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    brand = select_workspace_brand(workspace, args.brand_id)
+    if not brand:
+        return {"ok": False, "error": "No registered brand found. Run register-brand first."}
+    governance = build_brand_governance(
+        brand,
+        channels=parse_list(args.channels),
+        permissions=parse_list(args.permissions),
+        approval_policy=args.approval_policy,
+        notes=args.notes,
+    )
+    governance_items = upsert_by_id([item for item in workspace.get("brandGovernance", []) if isinstance(item, dict)], governance)
+    governance_path = workspace_dir / PORTFOLIO_DIR / "brand-governance.md"
+    governance_json_path = workspace_dir / PORTFOLIO_DIR / "brand-governance.json"
+    write_text(governance_path, render_brand_governance_markdown(governance_items))
+    write_text(governance_json_path, json.dumps(governance_items, indent=2))
+    record_brand_governance(workspace_dir, governance)
+    return {
+        "ok": True,
+        "workspaceDir": str(workspace_dir),
+        "governance": governance,
+        "brandGovernancePath": str(governance_path),
+        "brandGovernanceJsonPath": str(governance_json_path),
+        "workspaceStatePath": str(workspace_dir / WORKSPACE_STATE_PATH),
+        "message": "Brand governance defaults updated in local workspace state.",
+    }
+
+
+def portfolio_summary(args: argparse.Namespace) -> dict[str, Any]:
+    workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    brands = [item for item in workspace.get("brands", []) if isinstance(item, dict)]
+    if not brands:
+        return {"ok": False, "error": "No registered brands found. Run register-brand first."}
+    summary = build_portfolio_summary(workspace, period=args.period)
+    summary_path = workspace_dir / PORTFOLIO_DIR / "portfolio-summary.md"
+    summary_json_path = workspace_dir / PORTFOLIO_DIR / "portfolio-summary.json"
+    write_text(summary_path, render_portfolio_summary_markdown(summary))
+    write_text(summary_json_path, json.dumps(summary, indent=2))
+    record_portfolio_summary(workspace_dir, summary)
+    return {
+        "ok": True,
+        "workspaceDir": str(workspace_dir),
+        "portfolioSummary": summary,
+        "portfolioSummaryPath": str(summary_path),
+        "portfolioSummaryJsonPath": str(summary_json_path),
+        "workspaceStatePath": str(workspace_dir / WORKSPACE_STATE_PATH),
+        "next": "Use cross-brand-digest for an executive digest across all registered brands.",
+    }
+
+
+def cross_brand_digest(args: argparse.Namespace) -> dict[str, Any]:
+    workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    brands = [item for item in workspace.get("brands", []) if isinstance(item, dict)]
+    if not brands:
+        return {"ok": False, "error": "No registered brands found. Run register-brand first."}
+    digest = build_cross_brand_digest(workspace, period=args.period, audience=args.audience)
+    digest_path = workspace_dir / PORTFOLIO_DIR / "cross-brand-digest.md"
+    digest_json_path = workspace_dir / PORTFOLIO_DIR / "cross-brand-digest.json"
+    write_text(digest_path, render_cross_brand_digest_markdown(digest))
+    write_text(digest_json_path, json.dumps(digest, indent=2))
+    record_cross_brand_digest(workspace_dir, digest)
+    return {
+        "ok": True,
+        "workspaceDir": str(workspace_dir),
+        "crossBrandDigest": digest,
+        "crossBrandDigestPath": str(digest_path),
+        "crossBrandDigestJsonPath": str(digest_json_path),
+        "workspaceStatePath": str(workspace_dir / WORKSPACE_STATE_PATH),
+        "message": "Cross-brand digest generated from registered local brand projects.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -977,6 +1137,17 @@ def select_approval_package(state: dict[str, Any], package_id: str) -> dict[str,
     for package in packages:
         if str(package.get("id", "")) == package_id:
             return package
+    return {}
+
+
+def select_workspace_brand(workspace: dict[str, Any], brand_id: str) -> dict[str, Any]:
+    brands = [item for item in workspace.get("brands", []) if isinstance(item, dict)]
+    needle = brand_id.strip().lower()
+    if not needle and brands:
+        return brands[-1]
+    for brand in brands:
+        if str(brand.get("id", "")).lower() == needle or str(brand.get("brand", "")).lower() == needle:
+            return brand
     return {}
 
 
@@ -2341,6 +2512,211 @@ def weekly_next_actions(
     return actions
 
 
+def build_brand_registry_entry(
+    *,
+    project_dir: Path,
+    project_state: dict[str, Any],
+    owner: str,
+    status: str,
+    notes: str,
+) -> dict[str, Any]:
+    strategy = project_state.get("lastStrategy", {}) if isinstance(project_state.get("lastStrategy"), dict) else {}
+    campaign = project_state.get("lastCampaign", {}) if isinstance(project_state.get("lastCampaign"), dict) else {}
+    brand_name = str(strategy.get("brand") or project_dir.name.replace("-", " ").title())
+    return {
+        "type": "brand-registry-entry",
+        "id": slugify(brand_name, fallback="brand"),
+        "brand": brand_name,
+        "projectDir": str(project_dir),
+        "owner": owner,
+        "status": status,
+        "business": strategy.get("business", ""),
+        "audience": strategy.get("audience", ""),
+        "offer": strategy.get("offer", ""),
+        "region": strategy.get("region", ""),
+        "channels": [str(channel) for channel in strategy.get("channels", []) if str(channel).strip()],
+        "latestCampaign": campaign.get("name", ""),
+        "workflowState": project_state.get("workflowState", ""),
+        "notes": notes.strip(),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_brand_governance(
+    brand: dict[str, Any],
+    *,
+    channels: list[str],
+    permissions: list[str],
+    approval_policy: str,
+    notes: str,
+) -> dict[str, Any]:
+    active_channels = channels or [str(channel) for channel in brand.get("channels", []) if str(channel).strip()]
+    active_permissions = permissions or [
+        "draft_content",
+        "prepare_approval_package",
+        "prepare_integration_handoff",
+        "capture_manual_evidence",
+    ]
+    return {
+        "type": "brand-governance",
+        "id": str(brand.get("id") or slugify(str(brand.get("brand") or "brand"))),
+        "brand": brand.get("brand", ""),
+        "owner": brand.get("owner", ""),
+        "defaultChannels": active_channels,
+        "allowedActions": active_permissions,
+        "approvalPolicy": approval_policy or "approval required before external publishing, sending, CRM writes, ad changes, or website changes",
+        "blockedActions": [
+            "publish_without_approval",
+            "send_outreach_without_approval",
+            "write_crm_without_approval",
+            "change_live_ads_without_approval",
+            "edit_production_site_without_approval",
+        ],
+        "notes": notes.strip(),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def load_registered_brand_states(workspace: dict[str, Any]) -> list[dict[str, Any]]:
+    loaded = []
+    governance_by_id = {
+        str(item.get("id", "")): item
+        for item in workspace.get("brandGovernance", [])
+        if isinstance(item, dict)
+    }
+    for brand in workspace.get("brands", []):
+        if not isinstance(brand, dict):
+            continue
+        project_dir = Path(str(brand.get("projectDir", ""))).expanduser()
+        state = read_state(project_dir / STATE_PATH)
+        loaded.append(
+            {
+                "brand": brand,
+                "state": state,
+                "governance": governance_by_id.get(str(brand.get("id", "")), {}),
+                "projectExists": project_dir.exists(),
+            }
+        )
+    return loaded
+
+
+def build_portfolio_summary(workspace: dict[str, Any], *, period: str) -> dict[str, Any]:
+    brand_states = load_registered_brand_states(workspace)
+    rows = [portfolio_brand_row(item) for item in brand_states]
+    totals = {
+        "brands": len(rows),
+        "activeBrands": sum(1 for row in rows if row.get("status") == "active"),
+        "campaigns": sum(int(row.get("campaigns", 0)) for row in rows),
+        "contentDrafts": sum(int(row.get("contentDrafts", 0)) for row in rows),
+        "leadScorecards": sum(int(row.get("leadScorecards", 0)) for row in rows),
+        "monitorAlerts": sum(int(row.get("monitorAlerts", 0)) for row in rows),
+        "weeklyDigests": sum(int(row.get("weeklyDigests", 0)) for row in rows),
+    }
+    return {
+        "type": "portfolio-summary",
+        "period": period or "latest period",
+        "totals": totals,
+        "brands": rows,
+        "portfolioRisks": portfolio_risks(rows),
+        "nextActions": portfolio_next_actions(rows),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def portfolio_brand_row(item: dict[str, Any]) -> dict[str, Any]:
+    brand = item.get("brand", {}) if isinstance(item.get("brand"), dict) else {}
+    state = item.get("state", {}) if isinstance(item.get("state"), dict) else {}
+    governance = item.get("governance", {}) if isinstance(item.get("governance"), dict) else {}
+    weekly = state.get("lastWeeklyDigest", {}) if isinstance(state.get("lastWeeklyDigest"), dict) else {}
+    alert_summary = weekly.get("alertSummary", {}) if isinstance(weekly.get("alertSummary"), dict) else {}
+    return {
+        "id": brand.get("id", ""),
+        "brand": brand.get("brand", ""),
+        "owner": brand.get("owner", ""),
+        "status": brand.get("status", ""),
+        "projectDir": brand.get("projectDir", ""),
+        "workflowState": state.get("workflowState", brand.get("workflowState", "")),
+        "campaigns": len(state.get("campaigns", [])),
+        "contentDrafts": sum(len(item.get("drafts", [])) for item in state.get("contentDrafts", []) if isinstance(item, dict)),
+        "leadScorecards": len(state.get("leadScorecards", [])),
+        "monitorAlerts": len(state.get("monitorAlerts", [])),
+        "weeklyDigests": len(state.get("weeklyDigests", [])),
+        "highAlerts": int(alert_summary.get("high", 0) or 0),
+        "latestCampaign": (state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}).get("name", brand.get("latestCampaign", "")),
+        "defaultChannels": governance.get("defaultChannels", brand.get("channels", [])),
+        "approvalPolicy": governance.get("approvalPolicy", ""),
+    }
+
+
+def portfolio_risks(rows: list[dict[str, Any]]) -> list[str]:
+    risks = []
+    if any(not row.get("campaigns") for row in rows):
+        risks.append("One or more registered brands do not have a campaign yet.")
+    if any(row.get("highAlerts", 0) for row in rows):
+        risks.append("At least one brand has high-priority monitoring alerts.")
+    if any(not row.get("approvalPolicy") for row in rows):
+        risks.append("One or more brands are missing explicit governance defaults.")
+    if not risks:
+        risks.append("No major portfolio risks detected from local state.")
+    return risks
+
+
+def portfolio_next_actions(rows: list[dict[str, Any]]) -> list[str]:
+    actions = []
+    for row in rows:
+        if not row.get("campaigns"):
+            actions.append(f"Create a campaign for {row.get('brand', 'the brand')}.")
+        if row.get("highAlerts", 0):
+            actions.append(f"Review high-priority alerts for {row.get('brand', 'the brand')}.")
+        if row.get("contentDrafts", 0) and not row.get("weeklyDigests", 0):
+            actions.append(f"Generate a weekly digest for {row.get('brand', 'the brand')}.")
+    return unique_list(actions) or ["Keep brand registry current and run portfolio-summary each review cycle."]
+
+
+def build_cross_brand_digest(workspace: dict[str, Any], *, period: str, audience: str) -> dict[str, Any]:
+    brand_states = load_registered_brand_states(workspace)
+    rows = [portfolio_brand_row(item) for item in brand_states]
+    digest_rows = []
+    for item, row in zip(brand_states, rows):
+        state = item.get("state", {}) if isinstance(item.get("state"), dict) else {}
+        weekly = state.get("lastWeeklyDigest", {}) if isinstance(state.get("lastWeeklyDigest"), dict) else {}
+        latest_performance = state.get("lastPerformanceSnapshot", {}) if isinstance(state.get("lastPerformanceSnapshot"), dict) else {}
+        digest_rows.append(
+            {
+                **row,
+                "lastWeeklyDigest": weekly,
+                "latestPerformance": latest_performance,
+                "latestLead": state.get("lastLeadScorecard", {}) if isinstance(state.get("lastLeadScorecard"), dict) else {},
+                "latestAlert": state.get("lastMonitorAlert", {}) if isinstance(state.get("lastMonitorAlert"), dict) else {},
+            }
+        )
+    return {
+        "type": "cross-brand-digest",
+        "period": period or "latest period",
+        "audience": audience or "portfolio owner",
+        "brandCount": len(digest_rows),
+        "brands": digest_rows,
+        "portfolioHighlights": cross_brand_highlights(digest_rows),
+        "portfolioNextActions": portfolio_next_actions(rows),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def cross_brand_highlights(rows: list[dict[str, Any]]) -> list[str]:
+    highlights = []
+    if rows:
+        highlights.append(f"{len(rows)} brands are registered in the marketing workspace.")
+    total_alerts = sum(int(row.get("monitorAlerts", 0) or 0) for row in rows)
+    if total_alerts:
+        highlights.append(f"{total_alerts} monitor alerts are recorded across brands.")
+    total_leads = sum(int(row.get("leadScorecards", 0) or 0) for row in rows)
+    if total_leads:
+        highlights.append(f"{total_leads} lead scorecards are available for review.")
+    if not highlights:
+        highlights.append("No cross-brand activity has been recorded yet.")
+    return highlights
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -2657,6 +3033,40 @@ def record_weekly_digest(project_dir: Path, digest: dict[str, Any]) -> None:
     state["lastWeeklyDigest"] = digest
     state["workflowState"] = "weekly_digest_ready"
     write_state(project_dir, state)
+
+
+def record_brand_registration(workspace_dir: Path, brand: dict[str, Any], governance: dict[str, Any]) -> None:
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    workspace["brands"] = upsert_by_id([item for item in workspace.get("brands", []) if isinstance(item, dict)], brand)
+    workspace["brandGovernance"] = upsert_by_id([item for item in workspace.get("brandGovernance", []) if isinstance(item, dict)], governance)
+    workspace["lastBrand"] = brand
+    workspace["lastBrandGovernance"] = governance
+    workspace["workflowState"] = "brand_registered"
+    write_workspace_state(workspace_dir, workspace)
+
+
+def record_brand_governance(workspace_dir: Path, governance: dict[str, Any]) -> None:
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    workspace["brandGovernance"] = upsert_by_id([item for item in workspace.get("brandGovernance", []) if isinstance(item, dict)], governance)
+    workspace["lastBrandGovernance"] = governance
+    workspace["workflowState"] = "brand_governance_ready"
+    write_workspace_state(workspace_dir, workspace)
+
+
+def record_portfolio_summary(workspace_dir: Path, summary: dict[str, Any]) -> None:
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    workspace.setdefault("portfolioSummaries", []).append(summary)
+    workspace["lastPortfolioSummary"] = summary
+    workspace["workflowState"] = "portfolio_summary_ready"
+    write_workspace_state(workspace_dir, workspace)
+
+
+def record_cross_brand_digest(workspace_dir: Path, digest: dict[str, Any]) -> None:
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    workspace.setdefault("crossBrandDigests", []).append(digest)
+    workspace["lastCrossBrandDigest"] = digest
+    workspace["workflowState"] = "cross_brand_digest_ready"
+    write_workspace_state(workspace_dir, workspace)
 
 
 def recommend_channels(business: str, audience: str, goal: str) -> list[str]:
@@ -3701,6 +4111,126 @@ def render_weekly_digest_markdown(digest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_brand_registry_markdown(brands: list[dict[str, Any]]) -> str:
+    lines = ["# Brand Registry", "", "- Source: registered local marketing project directories.", ""]
+    for brand in brands:
+        lines.extend(
+            [
+                f"## {brand.get('brand', '')}",
+                "",
+                f"- ID: {brand.get('id', '')}",
+                f"- Owner: {brand.get('owner', '')}",
+                f"- Status: {brand.get('status', '')}",
+                f"- Project: {brand.get('projectDir', '')}",
+                f"- Audience: {brand.get('audience', '')}",
+                f"- Offer: {brand.get('offer', '')}",
+                f"- Region: {brand.get('region', '')}",
+                f"- Latest campaign: {brand.get('latestCampaign', '')}",
+                f"- Workflow state: {brand.get('workflowState', '')}",
+                "- Channels: " + ", ".join(brand.get("channels", [])),
+                "",
+            ]
+        )
+        if brand.get("notes"):
+            lines.extend(["### Notes", str(brand.get("notes", "")), ""])
+    return "\n".join(lines)
+
+
+def render_brand_governance_markdown(governance_items: list[dict[str, Any]]) -> str:
+    lines = ["# Brand Governance", "", "- These are local defaults, not external platform permissions.", ""]
+    for item in governance_items:
+        lines.extend(
+            [
+                f"## {item.get('brand', '')}",
+                "",
+                f"- Brand ID: {item.get('id', '')}",
+                f"- Owner: {item.get('owner', '')}",
+                f"- Approval policy: {item.get('approvalPolicy', '')}",
+                "",
+                "### Default Channels",
+                *[f"- {channel}" for channel in item.get("defaultChannels", [])],
+                "",
+                "### Allowed Actions",
+                *[f"- {action}" for action in item.get("allowedActions", [])],
+                "",
+                "### Blocked Actions",
+                *[f"- {action}" for action in item.get("blockedActions", [])],
+                "",
+            ]
+        )
+        if item.get("notes"):
+            lines.extend(["### Notes", str(item.get("notes", "")), ""])
+    return "\n".join(lines)
+
+
+def render_portfolio_summary_markdown(summary: dict[str, Any]) -> str:
+    totals = summary.get("totals", {}) if isinstance(summary.get("totals"), dict) else {}
+    lines = [
+        "# Marketing Portfolio Summary",
+        "",
+        f"- Period: {summary.get('period', '')}",
+        f"- Brands: {totals.get('brands', 0)}",
+        f"- Active brands: {totals.get('activeBrands', 0)}",
+        f"- Campaigns: {totals.get('campaigns', 0)}",
+        f"- Content drafts: {totals.get('contentDrafts', 0)}",
+        f"- Lead scorecards: {totals.get('leadScorecards', 0)}",
+        f"- Monitor alerts: {totals.get('monitorAlerts', 0)}",
+        "",
+        "## Brands",
+    ]
+    for brand in summary.get("brands", []):
+        lines.extend(
+            [
+                f"### {brand.get('brand', '')}",
+                f"- Owner: {brand.get('owner', '')}",
+                f"- Status: {brand.get('status', '')}",
+                f"- Workflow: {brand.get('workflowState', '')}",
+                f"- Campaigns: {brand.get('campaigns', 0)}",
+                f"- Leads: {brand.get('leadScorecards', 0)}",
+                f"- Alerts: {brand.get('monitorAlerts', 0)}",
+                f"- Latest campaign: {brand.get('latestCampaign', '')}",
+                "",
+            ]
+        )
+    lines.extend(["## Portfolio Risks", *[f"- {item}" for item in summary.get("portfolioRisks", [])], "", "## Next Actions"])
+    lines.extend(f"- {item}" for item in summary.get("nextActions", []))
+    return "\n".join(lines)
+
+
+def render_cross_brand_digest_markdown(digest: dict[str, Any]) -> str:
+    lines = [
+        "# Cross-Brand Marketing Digest",
+        "",
+        f"- Period: {digest.get('period', '')}",
+        f"- Audience: {digest.get('audience', '')}",
+        f"- Brands: {digest.get('brandCount', 0)}",
+        "",
+        "## Portfolio Highlights",
+        *[f"- {item}" for item in digest.get("portfolioHighlights", [])],
+        "",
+        "## Brand Updates",
+    ]
+    for brand in digest.get("brands", []):
+        latest_alert = brand.get("latestAlert", {}) if isinstance(brand.get("latestAlert"), dict) else {}
+        latest_lead = brand.get("latestLead", {}) if isinstance(brand.get("latestLead"), dict) else {}
+        latest_performance = brand.get("latestPerformance", {}) if isinstance(brand.get("latestPerformance"), dict) else {}
+        derived = latest_performance.get("derivedMetrics", {}) if isinstance(latest_performance.get("derivedMetrics"), dict) else {}
+        lines.extend(
+            [
+                f"### {brand.get('brand', '')}",
+                f"- Owner: {brand.get('owner', '')}",
+                f"- Latest campaign: {brand.get('latestCampaign', '')}",
+                f"- Monitor alerts: {brand.get('monitorAlerts', 0)}",
+                f"- Latest alert: {latest_alert.get('title', '')}",
+                f"- Latest lead: {latest_lead.get('company') or latest_lead.get('name') or ''}",
+                f"- Latest CTR: {percent(derived.get('ctr', 0))}",
+                "",
+            ]
+        )
+    lines.extend(["## Portfolio Next Actions", *[f"- {item}" for item in digest.get("portfolioNextActions", [])]])
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -3920,6 +4450,37 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--period", default="latest week", help="Digest period.")
     digest.add_argument("--audience", default="marketing team", help="Digest audience.")
     digest.set_defaults(func=weekly_digest)
+
+    brand_register = subparsers.add_parser("register-brand", help="Register a brand project in a multi-brand marketing workspace.")
+    brand_register.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
+    brand_register.add_argument("--project-dir", required=True, help="Existing brand marketing project directory.")
+    brand_register.add_argument("--owner", default="", help="Brand owner or responsible team.")
+    brand_register.add_argument("--status", choices=("active", "paused", "archived"), default="active", help="Brand workspace status.")
+    brand_register.add_argument("--channels", default="", help="Comma-separated default channels for this brand.")
+    brand_register.add_argument("--permissions", default="", help="Comma-separated allowed local actions.")
+    brand_register.add_argument("--approval-policy", default="", help="Brand-specific approval policy.")
+    brand_register.add_argument("--notes", default="", help="Registry or governance notes.")
+    brand_register.set_defaults(func=register_brand)
+
+    governance = subparsers.add_parser("brand-governance", help="Update governance defaults for a registered brand.")
+    governance.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
+    governance.add_argument("--brand-id", default="", help="Brand ID or name. Defaults to latest registered brand.")
+    governance.add_argument("--channels", default="", help="Comma-separated default channels.")
+    governance.add_argument("--permissions", default="", help="Comma-separated allowed local actions.")
+    governance.add_argument("--approval-policy", default="", help="Brand-specific approval policy.")
+    governance.add_argument("--notes", default="", help="Governance notes.")
+    governance.set_defaults(func=brand_governance)
+
+    portfolio = subparsers.add_parser("portfolio-summary", help="Generate a portfolio summary across registered brand projects.")
+    portfolio.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
+    portfolio.add_argument("--period", default="latest period", help="Portfolio reporting period.")
+    portfolio.set_defaults(func=portfolio_summary)
+
+    cross_digest = subparsers.add_parser("cross-brand-digest", help="Generate an executive digest across registered brands.")
+    cross_digest.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
+    cross_digest.add_argument("--period", default="latest period", help="Digest reporting period.")
+    cross_digest.add_argument("--audience", default="portfolio owner", help="Digest audience.")
+    cross_digest.set_defaults(func=cross_brand_digest)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

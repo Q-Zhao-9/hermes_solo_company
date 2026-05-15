@@ -1165,3 +1165,179 @@ def test_record_monitor_alert_and_weekly_digest_summarize_monitoring(tmp_path):
     assert "Performance Notes" in digest_md
     assert state["workflowState"] == "weekly_digest_ready"
     assert "Weekly digest: `2026-W20` with `1` alerts" in summary["summary"]
+
+
+def test_register_brand_and_brand_governance_create_workspace_artifacts(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    project_dir = Path(strategy["projectDir"])
+    workspace_dir = tmp_path / "workspace"
+
+    result = run_script(
+        "register-brand",
+        "--workspace-dir",
+        str(workspace_dir),
+        "--project-dir",
+        str(project_dir),
+        "--owner",
+        "Jane",
+        "--channels",
+        "LinkedIn,SEO blog,Email",
+        "--permissions",
+        "draft_content,prepare_approval_package",
+        "--approval-policy",
+        "Jane approval required before external action",
+        "--notes",
+        "Industrial account.",
+    )
+    governance = run_script(
+        "brand-governance",
+        "--workspace-dir",
+        str(workspace_dir),
+        "--brand-id",
+        "acme-lidar",
+        "--channels",
+        "LinkedIn,YouTube demos",
+        "--permissions",
+        "draft_content,capture_manual_evidence",
+        "--approval-policy",
+        "Founder approval required before publishing.",
+    )
+
+    registry_md = Path(result["brandRegistryPath"]).read_text(encoding="utf-8")
+    governance_md = Path(governance["brandGovernancePath"]).read_text(encoding="utf-8")
+    workspace_state = json.loads((workspace_dir / "docs" / "hermes-marketing-workspace.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["brand"]["id"] == "acme-lidar"
+    assert "Brand Registry" in registry_md
+    assert "Industrial account." in registry_md
+    assert governance["ok"] is True
+    assert governance["governance"]["defaultChannels"] == ["LinkedIn", "YouTube demos"]
+    assert "Founder approval required before publishing." in governance_md
+    assert workspace_state["workflowState"] == "brand_governance_ready"
+    assert workspace_state["lastBrand"]["brand"] == "Acme LiDAR"
+
+
+def test_portfolio_summary_and_cross_brand_digest_cover_registered_brands(tmp_path):
+    acme = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    beta = run_script(
+        "create-strategy",
+        "--brand",
+        "Beta AI",
+        "--business",
+        "AI workflow automation software for operations teams.",
+        "--audience",
+        "operations leaders",
+        "--goal",
+        "Book demos",
+        "--offer",
+        "workflow automation platform",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    acme_dir = Path(acme["projectDir"])
+    beta_dir = Path(beta["projectDir"])
+    workspace_dir = tmp_path / "workspace"
+    run_script("create-campaign", "--project-dir", str(acme_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+    run_script("define-lead-signals", "--project-dir", str(acme_dir))
+    run_script(
+        "score-lead",
+        "--project-dir",
+        str(acme_dir),
+        "--name",
+        "Jordan",
+        "--company",
+        "North Ridge Aggregates",
+        "--text",
+        "We are looking for truck volume measurement to reduce loading losses.",
+    )
+    run_script(
+        "record-performance",
+        "--project-dir",
+        str(acme_dir),
+        "--channel",
+        "LinkedIn",
+        "--metrics",
+        "impressions=1000,engagements=80,clicks=35,leads=4",
+    )
+    query = run_script(
+        "create-monitor-query",
+        "--project-dir",
+        str(acme_dir),
+        "--name",
+        "Lead watch",
+        "--type",
+        "lead",
+        "--query",
+        '"looking for truck volume measurement"',
+    )
+    run_script(
+        "record-monitor-alert",
+        "--project-dir",
+        str(acme_dir),
+        "--query-id",
+        query["monitorQuery"]["id"],
+        "--title",
+        "Buyer asks for vendor recommendations",
+        "--summary",
+        "Buyer asks for vendor recommendations.",
+        "--severity",
+        "high",
+    )
+    run_script("weekly-digest", "--project-dir", str(acme_dir), "--period", "2026-W20")
+    run_script("register-brand", "--workspace-dir", str(workspace_dir), "--project-dir", str(acme_dir), "--owner", "Jane")
+    run_script("register-brand", "--workspace-dir", str(workspace_dir), "--project-dir", str(beta_dir), "--owner", "Max")
+
+    summary = run_script("portfolio-summary", "--workspace-dir", str(workspace_dir), "--period", "2026-W20")
+    digest = run_script(
+        "cross-brand-digest",
+        "--workspace-dir",
+        str(workspace_dir),
+        "--period",
+        "2026-W20",
+        "--audience",
+        "executive team",
+    )
+
+    summary_md = Path(summary["portfolioSummaryPath"]).read_text(encoding="utf-8")
+    digest_md = Path(digest["crossBrandDigestPath"]).read_text(encoding="utf-8")
+    workspace_state = json.loads((workspace_dir / "docs" / "hermes-marketing-workspace.json").read_text(encoding="utf-8"))
+    assert summary["ok"] is True
+    assert summary["portfolioSummary"]["totals"]["brands"] == 2
+    assert summary["portfolioSummary"]["totals"]["campaigns"] == 1
+    assert summary["portfolioSummary"]["totals"]["monitorAlerts"] == 1
+    assert "Marketing Portfolio Summary" in summary_md
+    assert "Acme LiDAR" in summary_md
+    assert "Beta AI" in summary_md
+    assert digest["ok"] is True
+    assert digest["crossBrandDigest"]["brandCount"] == 2
+    assert "Cross-Brand Marketing Digest" in digest_md
+    assert "Buyer asks for vendor recommendations" in digest_md
+    assert workspace_state["workflowState"] == "cross_brand_digest_ready"
