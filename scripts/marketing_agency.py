@@ -11,8 +11,10 @@ handoffs. Phase 8 adds platform integration handoff adapters and execution
 evidence capture. Phase 9 adds saved monitoring queries, monitor schedule
 handoffs, alert reports, and weekly digest generation. Phase 10 adds
 multi-brand workspace registry, governance defaults, portfolio summaries, and
-cross-brand digests. It avoids network access and does not publish, message,
-email, update CRM records, schedule external jobs, or modify external systems.
+cross-brand digests. Phase 11 adds campaign experiment plans, variant result
+tracking, winner recommendations, and experiment history. It avoids network
+access and does not publish, message, email, update CRM records, schedule
+external jobs, or modify external systems.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ EXECUTION_DIR = Path("docs") / "execution"
 INTEGRATIONS_DIR = Path("docs") / "integrations"
 MONITORING_DIR = Path("docs") / "monitoring"
 PORTFOLIO_DIR = Path("docs") / "portfolio"
+EXPERIMENTS_DIR = Path("docs") / "experiments"
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,9 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("monitorJobs", [])
     data.setdefault("monitorAlerts", [])
     data.setdefault("weeklyDigests", [])
+    data.setdefault("experiments", [])
+    data.setdefault("experimentResults", [])
+    data.setdefault("experimentReports", [])
     return data
 
 
@@ -140,6 +146,9 @@ def default_state() -> dict[str, Any]:
         "monitorJobs": [],
         "monitorAlerts": [],
         "weeklyDigests": [],
+        "experiments": [],
+        "experimentResults": [],
+        "experimentReports": [],
     }
 
 
@@ -161,6 +170,7 @@ def read_workspace_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("brandGovernance", [])
     data.setdefault("portfolioSummaries", [])
     data.setdefault("crossBrandDigests", [])
+    data.setdefault("experimentHistories", [])
     return data
 
 
@@ -171,6 +181,7 @@ def default_workspace_state() -> dict[str, Any]:
         "brandGovernance": [],
         "portfolioSummaries": [],
         "crossBrandDigests": [],
+        "experimentHistories": [],
     }
 
 
@@ -1099,6 +1110,124 @@ def cross_brand_digest(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def create_experiment(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    campaign = select_campaign(state, args.campaign)
+    experiment = build_experiment_plan(
+        state,
+        name=args.name,
+        hypothesis=args.hypothesis,
+        metric=args.metric,
+        channel=args.channel,
+        variants=parse_list(args.variants),
+        duration=args.duration,
+        owner=args.owner,
+        campaign=campaign,
+    )
+    experiments = upsert_by_id([item for item in state.get("experiments", []) if isinstance(item, dict)], experiment)
+    experiment_path = project_dir / EXPERIMENTS_DIR / "experiment-plans.md"
+    experiment_json_path = project_dir / EXPERIMENTS_DIR / "experiment-plans.json"
+    write_text(experiment_path, render_experiment_plans_markdown(experiments))
+    write_text(experiment_json_path, json.dumps(experiments, indent=2))
+    record_experiment(project_dir, experiment)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "experiment": experiment,
+        "experimentPlansPath": str(experiment_path),
+        "experimentPlansJsonPath": str(experiment_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Record variant results with record-experiment-result, then generate experiment-report.",
+    }
+
+
+def record_experiment_result(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    experiment = select_experiment(state, args.experiment_id)
+    if not experiment:
+        return {"ok": False, "error": "No experiment found. Run create-experiment first."}
+    result = build_experiment_result(
+        experiment,
+        variant=args.variant,
+        metrics=parse_metrics(args.metrics),
+        notes=args.notes,
+        status=args.status,
+    )
+    results = [item for item in state.get("experimentResults", []) if isinstance(item, dict)]
+    results.append(result)
+    results_path = project_dir / EXPERIMENTS_DIR / "experiment-results.md"
+    results_json_path = project_dir / EXPERIMENTS_DIR / "experiment-results.json"
+    write_text(results_path, render_experiment_results_markdown(results))
+    write_text(results_json_path, json.dumps(results, indent=2))
+    record_experiment_result_state(project_dir, result)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "experimentResult": result,
+        "experimentResultsPath": str(results_path),
+        "experimentResultsJsonPath": str(results_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Generate experiment-report when all variants have enough data.",
+    }
+
+
+def experiment_report(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    experiment = select_experiment(state, args.experiment_id)
+    if not experiment:
+        return {"ok": False, "error": "No experiment found. Run create-experiment first."}
+    report = build_experiment_report(state, experiment=experiment, period=args.period)
+    report_path = project_dir / EXPERIMENTS_DIR / "experiment-report.md"
+    report_json_path = project_dir / EXPERIMENTS_DIR / "experiment-report.json"
+    write_text(report_path, render_experiment_report_markdown(report))
+    write_text(report_json_path, json.dumps(report, indent=2))
+    record_experiment_report(project_dir, report)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "experimentReport": report,
+        "experimentReportPath": str(report_path),
+        "experimentReportJsonPath": str(report_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Experiment report generated from local variant results.",
+    }
+
+
+def portfolio_experiment_history(args: argparse.Namespace) -> dict[str, Any]:
+    workspace_dir = Path(args.workspace_dir).expanduser().resolve()
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    brands = [item for item in workspace.get("brands", []) if isinstance(item, dict)]
+    if not brands:
+        return {"ok": False, "error": "No registered brands found. Run register-brand first."}
+    history = build_portfolio_experiment_history(workspace, period=args.period)
+    history_path = workspace_dir / PORTFOLIO_DIR / "experiment-history.md"
+    history_json_path = workspace_dir / PORTFOLIO_DIR / "experiment-history.json"
+    write_text(history_path, render_portfolio_experiment_history_markdown(history))
+    write_text(history_json_path, json.dumps(history, indent=2))
+    record_portfolio_experiment_history(workspace_dir, history)
+    return {
+        "ok": True,
+        "workspaceDir": str(workspace_dir),
+        "experimentHistory": history,
+        "experimentHistoryPath": str(history_path),
+        "experimentHistoryJsonPath": str(history_json_path),
+        "workspaceStatePath": str(workspace_dir / WORKSPACE_STATE_PATH),
+        "message": "Portfolio experiment history generated from registered local brand projects.",
+    }
+
+
 def select_campaign(state: dict[str, Any], campaign_slug: str) -> dict[str, Any]:
     if campaign_slug:
         for campaign in state.get("campaigns", []):
@@ -1148,6 +1277,16 @@ def select_workspace_brand(workspace: dict[str, Any], brand_id: str) -> dict[str
     for brand in brands:
         if str(brand.get("id", "")).lower() == needle or str(brand.get("brand", "")).lower() == needle:
             return brand
+    return {}
+
+
+def select_experiment(state: dict[str, Any], experiment_id: str) -> dict[str, Any]:
+    experiments = [item for item in state.get("experiments", []) if isinstance(item, dict)]
+    if not experiment_id and experiments:
+        return experiments[-1]
+    for experiment in experiments:
+        if str(experiment.get("id", "")) == experiment_id:
+            return experiment
     return {}
 
 
@@ -2611,6 +2750,8 @@ def build_portfolio_summary(workspace: dict[str, Any], *, period: str) -> dict[s
         "leadScorecards": sum(int(row.get("leadScorecards", 0)) for row in rows),
         "monitorAlerts": sum(int(row.get("monitorAlerts", 0)) for row in rows),
         "weeklyDigests": sum(int(row.get("weeklyDigests", 0)) for row in rows),
+        "experiments": sum(int(row.get("experiments", 0)) for row in rows),
+        "experimentReports": sum(int(row.get("experimentReports", 0)) for row in rows),
     }
     return {
         "type": "portfolio-summary",
@@ -2641,6 +2782,8 @@ def portfolio_brand_row(item: dict[str, Any]) -> dict[str, Any]:
         "leadScorecards": len(state.get("leadScorecards", [])),
         "monitorAlerts": len(state.get("monitorAlerts", [])),
         "weeklyDigests": len(state.get("weeklyDigests", [])),
+        "experiments": len(state.get("experiments", [])),
+        "experimentReports": len(state.get("experimentReports", [])),
         "highAlerts": int(alert_summary.get("high", 0) or 0),
         "latestCampaign": (state.get("lastCampaign", {}) if isinstance(state.get("lastCampaign"), dict) else {}).get("name", brand.get("latestCampaign", "")),
         "defaultChannels": governance.get("defaultChannels", brand.get("channels", [])),
@@ -2688,6 +2831,7 @@ def build_cross_brand_digest(workspace: dict[str, Any], *, period: str, audience
                 "latestPerformance": latest_performance,
                 "latestLead": state.get("lastLeadScorecard", {}) if isinstance(state.get("lastLeadScorecard"), dict) else {},
                 "latestAlert": state.get("lastMonitorAlert", {}) if isinstance(state.get("lastMonitorAlert"), dict) else {},
+                "latestExperimentReport": state.get("lastExperimentReport", {}) if isinstance(state.get("lastExperimentReport"), dict) else {},
             }
         )
     return {
@@ -2712,9 +2856,192 @@ def cross_brand_highlights(rows: list[dict[str, Any]]) -> list[str]:
     total_leads = sum(int(row.get("leadScorecards", 0) or 0) for row in rows)
     if total_leads:
         highlights.append(f"{total_leads} lead scorecards are available for review.")
+    total_experiments = sum(int(row.get("experiments", 0) or 0) for row in rows)
+    if total_experiments:
+        highlights.append(f"{total_experiments} experiments are tracked across brands.")
     if not highlights:
         highlights.append("No cross-brand activity has been recorded yet.")
     return highlights
+
+
+def build_experiment_plan(
+    state: dict[str, Any],
+    *,
+    name: str,
+    hypothesis: str,
+    metric: str,
+    channel: str,
+    variants: list[str],
+    duration: str,
+    owner: str,
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    active_variants = variants or ["Control", "Variant A"]
+    experiment_id = slugify(f"experiment-{campaign.get('slug') or strategy.get('brand') or name}-{name}", fallback="experiment")
+    return {
+        "type": "experiment-plan",
+        "id": experiment_id,
+        "brand": strategy.get("brand", ""),
+        "campaign": campaign.get("name", ""),
+        "campaignSlug": campaign.get("slug", ""),
+        "name": name.strip(),
+        "hypothesis": hypothesis.strip(),
+        "primaryMetric": metric or "conversion_rate",
+        "channel": channel or (campaign.get("channels", ["all channels"])[0] if isinstance(campaign.get("channels"), list) and campaign.get("channels") else "all channels"),
+        "duration": duration or "2 weeks",
+        "owner": owner,
+        "variants": [{"name": variant, "status": "planned", "notes": ""} for variant in active_variants],
+        "successRule": f"Winner is the variant with the strongest {metric or 'conversion_rate'} after enough sample is collected.",
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_experiment_result(
+    experiment: dict[str, Any],
+    *,
+    variant: str,
+    metrics: dict[str, float],
+    notes: str,
+    status: str,
+) -> dict[str, Any]:
+    normalized = normalize_metrics(metrics)
+    derived = derive_performance_metrics(normalized)
+    return {
+        "type": "experiment-result",
+        "id": slugify(f"result-{experiment.get('id', '')}-{variant}-{datetime.now(timezone.utc).isoformat()}", fallback="experiment-result"),
+        "experimentId": experiment.get("id", ""),
+        "experimentName": experiment.get("name", ""),
+        "variant": variant.strip(),
+        "status": status,
+        "primaryMetric": experiment.get("primaryMetric", "conversion_rate"),
+        "metrics": normalized,
+        "derivedMetrics": derived,
+        "score": experiment_variant_score(str(experiment.get("primaryMetric") or ""), normalized, derived),
+        "notes": notes.strip(),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def experiment_variant_score(primary_metric: str, metrics: dict[str, float], derived: dict[str, float]) -> float:
+    key = slugify(primary_metric, fallback="conversion-rate").replace("-", "_")
+    if key in derived:
+        return float(derived[key])
+    if key in metrics:
+        return float(metrics[key])
+    if key in {"conversion_rate", "conversions"}:
+        return float(derived.get("conversionRate", 0.0) or metrics.get("conversions", 0.0))
+    if key in {"lead_rate", "leads"}:
+        return float(derived.get("leadRate", 0.0) or metrics.get("leads", 0.0))
+    if key == "ctr":
+        return float(derived.get("ctr", 0.0))
+    return float(derived.get("conversionRate", 0.0))
+
+
+def build_experiment_report(state: dict[str, Any], *, experiment: dict[str, Any], period: str) -> dict[str, Any]:
+    results = [
+        item
+        for item in state.get("experimentResults", [])
+        if isinstance(item, dict) and item.get("experimentId") == experiment.get("id")
+    ]
+    by_variant: dict[str, dict[str, Any]] = {}
+    for result in results:
+        variant = str(result.get("variant") or "variant")
+        existing = by_variant.get(variant)
+        if not existing or str(result.get("createdAt", "")) > str(existing.get("createdAt", "")):
+            by_variant[variant] = result
+    ranked = sorted(by_variant.values(), key=lambda item: float(item.get("score", 0.0) or 0.0), reverse=True)
+    winner = ranked[0] if ranked else {}
+    confidence = experiment_confidence(ranked)
+    return {
+        "type": "experiment-report",
+        "id": slugify(f"report-{experiment.get('id', '')}-{period}", fallback="experiment-report"),
+        "experimentId": experiment.get("id", ""),
+        "experimentName": experiment.get("name", ""),
+        "brand": experiment.get("brand", ""),
+        "campaign": experiment.get("campaign", ""),
+        "period": period or "latest period",
+        "primaryMetric": experiment.get("primaryMetric", ""),
+        "variantResults": ranked,
+        "winner": winner,
+        "confidence": confidence,
+        "recommendations": experiment_recommendations(experiment, ranked, confidence),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def experiment_confidence(ranked: list[dict[str, Any]]) -> str:
+    if len(ranked) < 2:
+        return "insufficient_data"
+    top = float(ranked[0].get("score", 0.0) or 0.0)
+    second = float(ranked[1].get("score", 0.0) or 0.0)
+    if top <= 0:
+        return "insufficient_data"
+    lift = safe_ratio(top - second, second) if second > 0 else 1.0
+    if lift >= 0.2:
+        return "directional_winner"
+    return "close_result"
+
+
+def experiment_recommendations(experiment: dict[str, Any], ranked: list[dict[str, Any]], confidence: str) -> list[str]:
+    if not ranked:
+        return ["Record variant results before selecting a winner."]
+    winner = ranked[0]
+    if confidence == "directional_winner":
+        return [
+            f"Use {winner.get('variant', 'the winner')} as the next control for {experiment.get('channel', 'the channel')}.",
+            "Document the learning before creating the next variant.",
+        ]
+    if confidence == "close_result":
+        return [
+            "Keep the current control and collect more sample before declaring a winner.",
+            "Create a sharper variant that changes one clear message, CTA, audience, or offer variable.",
+        ]
+    return ["Extend the experiment or improve tracking because current data is not enough to choose a winner."]
+
+
+def build_portfolio_experiment_history(workspace: dict[str, Any], *, period: str) -> dict[str, Any]:
+    brand_states = load_registered_brand_states(workspace)
+    rows = []
+    for item in brand_states:
+        brand = item.get("brand", {}) if isinstance(item.get("brand"), dict) else {}
+        state = item.get("state", {}) if isinstance(item.get("state"), dict) else {}
+        reports = [report for report in state.get("experimentReports", []) if isinstance(report, dict)]
+        experiments = [experiment for experiment in state.get("experiments", []) if isinstance(experiment, dict)]
+        rows.append(
+            {
+                "brandId": brand.get("id", ""),
+                "brand": brand.get("brand", ""),
+                "projectDir": brand.get("projectDir", ""),
+                "experimentCount": len(experiments),
+                "reportCount": len(reports),
+                "latestReport": reports[-1] if reports else {},
+            }
+        )
+    return {
+        "type": "portfolio-experiment-history",
+        "period": period or "latest period",
+        "brandCount": len(rows),
+        "experimentCount": sum(row["experimentCount"] for row in rows),
+        "reportCount": sum(row["reportCount"] for row in rows),
+        "brands": rows,
+        "recommendations": portfolio_experiment_recommendations(rows),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def portfolio_experiment_recommendations(rows: list[dict[str, Any]]) -> list[str]:
+    recommendations = []
+    for row in rows:
+        latest = row.get("latestReport", {}) if isinstance(row.get("latestReport"), dict) else {}
+        if not row.get("experimentCount"):
+            recommendations.append(f"Create the first campaign experiment for {row.get('brand', 'the brand')}.")
+        elif latest.get("confidence") == "directional_winner":
+            recommendations.append(f"Promote the winning variant for {row.get('brand', 'the brand')} into the next campaign cycle.")
+        elif latest.get("confidence") == "close_result":
+            recommendations.append(f"Run a sharper follow-up test for {row.get('brand', 'the brand')}.")
+    return unique_list(recommendations) or ["Continue experiment reviews across registered brands."]
 
 
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
@@ -2828,8 +3155,15 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     weekly = state.get("lastWeeklyDigest", {}) if isinstance(state.get("lastWeeklyDigest"), dict) else {}
     if weekly.get("period"):
         lines.append(f"Weekly digest: `{weekly.get('period')}` with `{weekly.get('alertSummary', {}).get('total', 0)}` alerts")
+    experiment = state.get("lastExperiment", {}) if isinstance(state.get("lastExperiment"), dict) else {}
+    if experiment.get("id"):
+        lines.append(f"Experiment: `{experiment.get('name')}` on `{experiment.get('channel')}`")
+    experiment_report_data = state.get("lastExperimentReport", {}) if isinstance(state.get("lastExperimentReport"), dict) else {}
+    if experiment_report_data.get("winner"):
+        winner = experiment_report_data.get("winner", {}) if isinstance(experiment_report_data.get("winner"), dict) else {}
+        lines.append(f"Experiment winner: `{winner.get('variant', '')}` confidence `{experiment_report_data.get('confidence', '')}`")
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, prepare integration handoff, or monitor market signals.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, prepare integration handoff, monitor market signals, or run experiments.")
     return "\n".join(lines)
 
 
@@ -3035,6 +3369,30 @@ def record_weekly_digest(project_dir: Path, digest: dict[str, Any]) -> None:
     write_state(project_dir, state)
 
 
+def record_experiment(project_dir: Path, experiment: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state["experiments"] = upsert_by_id([item for item in state.get("experiments", []) if isinstance(item, dict)], experiment)
+    state["lastExperiment"] = experiment
+    state["workflowState"] = "experiment_ready"
+    write_state(project_dir, state)
+
+
+def record_experiment_result_state(project_dir: Path, result: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("experimentResults", []).append(result)
+    state["lastExperimentResult"] = result
+    state["workflowState"] = "experiment_result_recorded"
+    write_state(project_dir, state)
+
+
+def record_experiment_report(project_dir: Path, report: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("experimentReports", []).append(report)
+    state["lastExperimentReport"] = report
+    state["workflowState"] = "experiment_report_ready"
+    write_state(project_dir, state)
+
+
 def record_brand_registration(workspace_dir: Path, brand: dict[str, Any], governance: dict[str, Any]) -> None:
     workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
     workspace["brands"] = upsert_by_id([item for item in workspace.get("brands", []) if isinstance(item, dict)], brand)
@@ -3066,6 +3424,14 @@ def record_cross_brand_digest(workspace_dir: Path, digest: dict[str, Any]) -> No
     workspace.setdefault("crossBrandDigests", []).append(digest)
     workspace["lastCrossBrandDigest"] = digest
     workspace["workflowState"] = "cross_brand_digest_ready"
+    write_workspace_state(workspace_dir, workspace)
+
+
+def record_portfolio_experiment_history(workspace_dir: Path, history: dict[str, Any]) -> None:
+    workspace = read_workspace_state(workspace_dir / WORKSPACE_STATE_PATH)
+    workspace.setdefault("experimentHistories", []).append(history)
+    workspace["lastExperimentHistory"] = history
+    workspace["workflowState"] = "experiment_history_ready"
     write_workspace_state(workspace_dir, workspace)
 
 
@@ -4175,6 +4541,7 @@ def render_portfolio_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Content drafts: {totals.get('contentDrafts', 0)}",
         f"- Lead scorecards: {totals.get('leadScorecards', 0)}",
         f"- Monitor alerts: {totals.get('monitorAlerts', 0)}",
+        f"- Experiments: {totals.get('experiments', 0)}",
         "",
         "## Brands",
     ]
@@ -4188,6 +4555,7 @@ def render_portfolio_summary_markdown(summary: dict[str, Any]) -> str:
                 f"- Campaigns: {brand.get('campaigns', 0)}",
                 f"- Leads: {brand.get('leadScorecards', 0)}",
                 f"- Alerts: {brand.get('monitorAlerts', 0)}",
+                f"- Experiments: {brand.get('experiments', 0)}",
                 f"- Latest campaign: {brand.get('latestCampaign', '')}",
                 "",
             ]
@@ -4214,6 +4582,8 @@ def render_cross_brand_digest_markdown(digest: dict[str, Any]) -> str:
         latest_alert = brand.get("latestAlert", {}) if isinstance(brand.get("latestAlert"), dict) else {}
         latest_lead = brand.get("latestLead", {}) if isinstance(brand.get("latestLead"), dict) else {}
         latest_performance = brand.get("latestPerformance", {}) if isinstance(brand.get("latestPerformance"), dict) else {}
+        latest_experiment = brand.get("latestExperimentReport", {}) if isinstance(brand.get("latestExperimentReport"), dict) else {}
+        winner = latest_experiment.get("winner", {}) if isinstance(latest_experiment.get("winner"), dict) else {}
         derived = latest_performance.get("derivedMetrics", {}) if isinstance(latest_performance.get("derivedMetrics"), dict) else {}
         lines.extend(
             [
@@ -4223,11 +4593,118 @@ def render_cross_brand_digest_markdown(digest: dict[str, Any]) -> str:
                 f"- Monitor alerts: {brand.get('monitorAlerts', 0)}",
                 f"- Latest alert: {latest_alert.get('title', '')}",
                 f"- Latest lead: {latest_lead.get('company') or latest_lead.get('name') or ''}",
+                f"- Latest experiment winner: {winner.get('variant', '')}",
                 f"- Latest CTR: {percent(derived.get('ctr', 0))}",
                 "",
             ]
         )
     lines.extend(["## Portfolio Next Actions", *[f"- {item}" for item in digest.get("portfolioNextActions", [])]])
+    return "\n".join(lines)
+
+
+def render_experiment_plans_markdown(experiments: list[dict[str, Any]]) -> str:
+    lines = ["# Experiment Plans", "", "- Status: planning artifacts only; publishing variants requires approval.", ""]
+    for experiment in experiments:
+        lines.extend(
+            [
+                f"## {experiment.get('name', '')}",
+                "",
+                f"- Experiment ID: {experiment.get('id', '')}",
+                f"- Brand: {experiment.get('brand', '')}",
+                f"- Campaign: {experiment.get('campaign', '')}",
+                f"- Channel: {experiment.get('channel', '')}",
+                f"- Primary metric: {experiment.get('primaryMetric', '')}",
+                f"- Duration: {experiment.get('duration', '')}",
+                f"- Owner: {experiment.get('owner', '')}",
+                f"- Success rule: {experiment.get('successRule', '')}",
+                "",
+                "### Hypothesis",
+                str(experiment.get("hypothesis", "")),
+                "",
+                "### Variants",
+            ]
+        )
+        for variant in experiment.get("variants", []):
+            lines.append(f"- {variant.get('name', '')}: {variant.get('status', '')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_experiment_results_markdown(results: list[dict[str, Any]]) -> str:
+    lines = ["# Experiment Results", "", "- Source: manually supplied or imported variant metrics.", ""]
+    for result in results:
+        metrics = result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {}
+        derived = result.get("derivedMetrics", {}) if isinstance(result.get("derivedMetrics"), dict) else {}
+        lines.extend(
+            [
+                f"## {result.get('experimentName', '')}: {result.get('variant', '')}",
+                "",
+                f"- Result ID: {result.get('id', '')}",
+                f"- Status: {result.get('status', '')}",
+                f"- Primary metric: {result.get('primaryMetric', '')}",
+                f"- Score: {result.get('score', 0)}",
+                f"- Impressions: {metrics.get('impressions', 0):.0f}",
+                f"- Clicks: {metrics.get('clicks', 0):.0f}",
+                f"- Leads: {metrics.get('leads', 0):.0f}",
+                f"- Conversions: {metrics.get('conversions', 0):.0f}",
+                f"- CTR: {percent(derived.get('ctr', 0))}",
+                f"- Lead rate: {percent(derived.get('leadRate', 0))}",
+                f"- Conversion rate: {percent(derived.get('conversionRate', 0))}",
+                "",
+            ]
+        )
+        if result.get("notes"):
+            lines.extend(["### Notes", str(result.get("notes", "")), ""])
+    return "\n".join(lines)
+
+
+def render_experiment_report_markdown(report: dict[str, Any]) -> str:
+    winner = report.get("winner", {}) if isinstance(report.get("winner"), dict) else {}
+    lines = [
+        f"# Experiment Report: {report.get('experimentName', '')}",
+        "",
+        f"- Brand: {report.get('brand', '')}",
+        f"- Campaign: {report.get('campaign', '')}",
+        f"- Period: {report.get('period', '')}",
+        f"- Primary metric: {report.get('primaryMetric', '')}",
+        f"- Confidence: {report.get('confidence', '')}",
+        f"- Winner: {winner.get('variant', '')}",
+        "",
+        "## Variant Results",
+    ]
+    for result in report.get("variantResults", []):
+        lines.append(f"- {result.get('variant', '')}: score {result.get('score', 0)} status {result.get('status', '')}")
+    lines.extend(["", "## Recommendations"])
+    lines.extend(f"- {item}" for item in report.get("recommendations", []))
+    return "\n".join(lines)
+
+
+def render_portfolio_experiment_history_markdown(history: dict[str, Any]) -> str:
+    lines = [
+        "# Portfolio Experiment History",
+        "",
+        f"- Period: {history.get('period', '')}",
+        f"- Brands: {history.get('brandCount', 0)}",
+        f"- Experiments: {history.get('experimentCount', 0)}",
+        f"- Reports: {history.get('reportCount', 0)}",
+        "",
+        "## Brands",
+    ]
+    for row in history.get("brands", []):
+        latest = row.get("latestReport", {}) if isinstance(row.get("latestReport"), dict) else {}
+        winner = latest.get("winner", {}) if isinstance(latest.get("winner"), dict) else {}
+        lines.extend(
+            [
+                f"### {row.get('brand', '')}",
+                f"- Experiments: {row.get('experimentCount', 0)}",
+                f"- Reports: {row.get('reportCount', 0)}",
+                f"- Latest experiment: {latest.get('experimentName', '')}",
+                f"- Latest winner: {winner.get('variant', '')}",
+                f"- Confidence: {latest.get('confidence', '')}",
+                "",
+            ]
+        )
+    lines.extend(["## Recommendations", *[f"- {item}" for item in history.get("recommendations", [])]])
     return "\n".join(lines)
 
 
@@ -4481,6 +4958,38 @@ def build_parser() -> argparse.ArgumentParser:
     cross_digest.add_argument("--period", default="latest period", help="Digest reporting period.")
     cross_digest.add_argument("--audience", default="portfolio owner", help="Digest audience.")
     cross_digest.set_defaults(func=cross_brand_digest)
+
+    experiment = subparsers.add_parser("create-experiment", help="Create a campaign experiment plan with variants and success metric.")
+    experiment.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    experiment.add_argument("--campaign", default="", help="Campaign slug. Defaults to latest campaign.")
+    experiment.add_argument("--name", required=True, help="Experiment name.")
+    experiment.add_argument("--hypothesis", required=True, help="Experiment hypothesis.")
+    experiment.add_argument("--metric", default="conversion_rate", help="Primary success metric, such as ctr, lead_rate, or conversion_rate.")
+    experiment.add_argument("--channel", default="", help="Experiment channel.")
+    experiment.add_argument("--variants", default="Control,Variant A", help="Comma-separated variant names.")
+    experiment.add_argument("--duration", default="2 weeks", help="Planned experiment duration.")
+    experiment.add_argument("--owner", default="", help="Experiment owner.")
+    experiment.set_defaults(func=create_experiment)
+
+    experiment_result = subparsers.add_parser("record-experiment-result", help="Record one variant result for an experiment.")
+    experiment_result.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    experiment_result.add_argument("--experiment-id", default="", help="Experiment ID. Defaults to latest experiment.")
+    experiment_result.add_argument("--variant", required=True, help="Variant name.")
+    experiment_result.add_argument("--metrics", required=True, help="Comma-separated metrics, such as impressions=1000,clicks=40,leads=5.")
+    experiment_result.add_argument("--status", choices=("running", "complete", "paused", "invalid"), default="complete", help="Variant result status.")
+    experiment_result.add_argument("--notes", default="", help="Result notes.")
+    experiment_result.set_defaults(func=record_experiment_result)
+
+    experiment_report_parser = subparsers.add_parser("experiment-report", help="Generate winner recommendation for an experiment.")
+    experiment_report_parser.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    experiment_report_parser.add_argument("--experiment-id", default="", help="Experiment ID. Defaults to latest experiment.")
+    experiment_report_parser.add_argument("--period", default="latest period", help="Experiment reporting period.")
+    experiment_report_parser.set_defaults(func=experiment_report)
+
+    experiment_history = subparsers.add_parser("portfolio-experiment-history", help="Generate experiment history across registered brands.")
+    experiment_history.add_argument("--workspace-dir", default="generated-marketing", help="Portfolio workspace directory.")
+    experiment_history.add_argument("--period", default="latest period", help="Portfolio experiment reporting period.")
+    experiment_history.set_defaults(func=portfolio_experiment_history)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

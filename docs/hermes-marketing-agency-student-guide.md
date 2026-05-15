@@ -566,12 +566,81 @@ The workspace reads local brand project state and summarizes it. Governance is
 documentation only; it does not grant real platform permissions or bypass
 approval requirements.
 
-## Phase 11 Preview
+## What Phase 11 Adds
 
-The next large phase can add campaign experiment management:
+Phase 11 adds campaign experiment management:
 
 - A/B test plans
 - experiment hypotheses
 - variant tracking
 - winner recommendations
 - experiment history per brand and portfolio
+
+Create an experiment plan:
+
+```bash
+scripts/marketing_agency.py create-experiment \
+  --project-dir generated-marketing/acme-lidar \
+  --name "CTA test" \
+  --hypothesis "ROI CTA will create more demo leads than technical CTA" \
+  --metric lead_rate \
+  --channel LinkedIn \
+  --variants "Technical CTA,ROI CTA"
+```
+
+Record variant results:
+
+```bash
+scripts/marketing_agency.py record-experiment-result \
+  --project-dir generated-marketing/acme-lidar \
+  --experiment-id "<experiment id>" \
+  --variant "ROI CTA" \
+  --metrics "impressions=1000,clicks=55,leads=8" \
+  --notes "ROI message outperformed technical message"
+```
+
+Generate an experiment report:
+
+```bash
+scripts/marketing_agency.py experiment-report \
+  --project-dir generated-marketing/acme-lidar \
+  --experiment-id "<experiment id>" \
+  --period "2026-W21"
+```
+
+Generate portfolio experiment history:
+
+```bash
+scripts/marketing_agency.py portfolio-experiment-history \
+  --workspace-dir generated-marketing \
+  --period "2026-W21"
+```
+
+Phase 11 writes:
+
+```text
+docs/experiments/experiment-plans.md
+docs/experiments/experiment-plans.json
+docs/experiments/experiment-results.md
+docs/experiments/experiment-results.json
+docs/experiments/experiment-report.md
+docs/experiments/experiment-report.json
+docs/portfolio/experiment-history.md
+docs/portfolio/experiment-history.json
+docs/hermes-marketing-state.json
+docs/hermes-marketing-workspace.json
+```
+
+Experiment reports recommend winners from local metrics only. They do not
+publish variants, modify ads, edit production pages, send emails, or change
+external campaign settings.
+
+## Phase 12 Preview
+
+The next large phase can add budget and ROI planning:
+
+- campaign budget plans
+- channel allocation recommendations
+- spend/result snapshots
+- ROI and CAC summaries
+- portfolio budget review

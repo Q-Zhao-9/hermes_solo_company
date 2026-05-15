@@ -1341,3 +1341,178 @@ def test_portfolio_summary_and_cross_brand_digest_cover_registered_brands(tmp_pa
     assert "Cross-Brand Marketing Digest" in digest_md
     assert "Buyer asks for vendor recommendations" in digest_md
     assert workspace_state["workflowState"] == "cross_brand_digest_ready"
+
+
+def test_create_experiment_records_results_and_recommends_winner(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script("create-campaign", "--project-dir", str(project_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+
+    experiment = run_script(
+        "create-experiment",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "CTA test",
+        "--hypothesis",
+        "ROI CTA will create more demo leads than technical CTA.",
+        "--metric",
+        "lead_rate",
+        "--channel",
+        "LinkedIn",
+        "--variants",
+        "Technical CTA,ROI CTA",
+        "--owner",
+        "marketing ops",
+    )
+    run_script(
+        "record-experiment-result",
+        "--project-dir",
+        str(project_dir),
+        "--experiment-id",
+        experiment["experiment"]["id"],
+        "--variant",
+        "Technical CTA",
+        "--metrics",
+        "impressions=1000,clicks=40,leads=2",
+        "--notes",
+        "Control message.",
+    )
+    run_script(
+        "record-experiment-result",
+        "--project-dir",
+        str(project_dir),
+        "--experiment-id",
+        experiment["experiment"]["id"],
+        "--variant",
+        "ROI CTA",
+        "--metrics",
+        "impressions=1000,clicks=55,leads=8",
+        "--notes",
+        "ROI message.",
+    )
+    report = run_script(
+        "experiment-report",
+        "--project-dir",
+        str(project_dir),
+        "--experiment-id",
+        experiment["experiment"]["id"],
+        "--period",
+        "2026-W21",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    plans_md = Path(experiment["experimentPlansPath"]).read_text(encoding="utf-8")
+    report_md = Path(report["experimentReportPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert experiment["ok"] is True
+    assert experiment["experiment"]["primaryMetric"] == "lead_rate"
+    assert "ROI CTA will create more demo leads" in plans_md
+    assert report["ok"] is True
+    assert report["experimentReport"]["winner"]["variant"] == "ROI CTA"
+    assert report["experimentReport"]["confidence"] == "directional_winner"
+    assert "Use ROI CTA as the next control" in report_md
+    assert state["workflowState"] == "experiment_report_ready"
+    assert "Experiment winner: `ROI CTA`" in summary["summary"]
+
+
+def test_portfolio_experiment_history_rolls_up_registered_brand_reports(tmp_path):
+    acme = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    beta = run_script(
+        "create-strategy",
+        "--brand",
+        "Beta AI",
+        "--business",
+        "AI workflow automation software for operations teams.",
+        "--audience",
+        "operations leaders",
+        "--goal",
+        "Book demos",
+        "--offer",
+        "workflow automation platform",
+        "--output-dir",
+        str(tmp_path / "brands"),
+    )
+    acme_dir = Path(acme["projectDir"])
+    beta_dir = Path(beta["projectDir"])
+    workspace_dir = tmp_path / "workspace"
+    run_script("create-campaign", "--project-dir", str(acme_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+    experiment = run_script(
+        "create-experiment",
+        "--project-dir",
+        str(acme_dir),
+        "--name",
+        "Hook test",
+        "--hypothesis",
+        "Problem-led hook improves CTR.",
+        "--metric",
+        "ctr",
+        "--variants",
+        "Feature hook,Problem hook",
+    )
+    run_script(
+        "record-experiment-result",
+        "--project-dir",
+        str(acme_dir),
+        "--experiment-id",
+        experiment["experiment"]["id"],
+        "--variant",
+        "Feature hook",
+        "--metrics",
+        "impressions=1000,clicks=20",
+    )
+    run_script(
+        "record-experiment-result",
+        "--project-dir",
+        str(acme_dir),
+        "--experiment-id",
+        experiment["experiment"]["id"],
+        "--variant",
+        "Problem hook",
+        "--metrics",
+        "impressions=1000,clicks=50",
+    )
+    run_script("experiment-report", "--project-dir", str(acme_dir), "--experiment-id", experiment["experiment"]["id"], "--period", "2026-W21")
+    run_script("register-brand", "--workspace-dir", str(workspace_dir), "--project-dir", str(acme_dir), "--owner", "Jane")
+    run_script("register-brand", "--workspace-dir", str(workspace_dir), "--project-dir", str(beta_dir), "--owner", "Max")
+
+    history = run_script("portfolio-experiment-history", "--workspace-dir", str(workspace_dir), "--period", "2026-W21")
+
+    history_md = Path(history["experimentHistoryPath"]).read_text(encoding="utf-8")
+    workspace_state = json.loads((workspace_dir / "docs" / "hermes-marketing-workspace.json").read_text(encoding="utf-8"))
+    assert history["ok"] is True
+    assert history["experimentHistory"]["brandCount"] == 2
+    assert history["experimentHistory"]["experimentCount"] == 1
+    assert history["experimentHistory"]["reportCount"] == 1
+    assert "Portfolio Experiment History" in history_md
+    assert "Problem hook" in history_md
+    assert "Create the first campaign experiment for Beta AI." in history_md
+    assert workspace_state["workflowState"] == "experiment_history_ready"

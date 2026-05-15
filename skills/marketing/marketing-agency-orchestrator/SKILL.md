@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, monitoring-automation, multi-brand-workspace, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, monitoring-automation, multi-brand-workspace, experiment-management, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -105,6 +105,15 @@ scripts/marketing_agency.py portfolio-summary --workspace-dir "<workspace dir>" 
 scripts/marketing_agency.py cross-brand-digest --workspace-dir "<workspace dir>" --period "<period>"
 ```
 
+Phase 11 supports campaign experiment management:
+
+```bash
+scripts/marketing_agency.py create-experiment --project-dir "<project dir>" --name "<test>" --hypothesis "<hypothesis>" --metric ctr
+scripts/marketing_agency.py record-experiment-result --project-dir "<project dir>" --experiment-id "<experiment>" --variant "<variant>" --metrics "impressions=1000,clicks=40,leads=4"
+scripts/marketing_agency.py experiment-report --project-dir "<project dir>" --experiment-id "<experiment>" --period "<period>"
+scripts/marketing_agency.py portfolio-experiment-history --workspace-dir "<workspace dir>" --period "<period>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -130,6 +139,9 @@ scripts/marketing_agency.py cross-brand-digest --workspace-dir "<workspace dir>"
 - **Multi-brand workspace**: use `multi-brand-workspace`,
   `register-brand`, `brand-governance`, `portfolio-summary`, and
   `cross-brand-digest`.
+- **Experiment management**: use `experiment-management`,
+  `create-experiment`, `record-experiment-result`, `experiment-report`, and
+  `portfolio-experiment-history`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.
