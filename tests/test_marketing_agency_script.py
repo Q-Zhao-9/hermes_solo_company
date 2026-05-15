@@ -977,3 +977,191 @@ def test_capture_execution_evidence_records_evidence_for_queue_item(tmp_path):
     assert "https://linkedin.example/post/1" in markdown
     assert state["workflowState"] == "execution_evidence_captured"
     assert "Execution evidence: `published` for `LinkedIn`" in summary["summary"]
+
+
+def test_create_monitor_query_and_schedule_monitor_write_state(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+
+    query = run_script(
+        "create-monitor-query",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Brand mention watch",
+        "--type",
+        "brand",
+        "--query",
+        '"Acme LiDAR" OR "automated truck volume measurement"',
+        "--channels",
+        "LinkedIn,X,Reddit",
+        "--priority",
+        "high",
+        "--notes",
+        "Track sales and reputation signals.",
+    )
+    jobs = run_script(
+        "schedule-monitor",
+        "--project-dir",
+        str(project_dir),
+        "--cadence",
+        "weekly",
+        "--owner",
+        "marketing ops",
+        "--destination",
+        "weekly digest",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    queries_md = Path(query["monitorQueriesPath"]).read_text(encoding="utf-8")
+    jobs_md = Path(jobs["monitorJobsPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert query["ok"] is True
+    assert query["monitorQuery"]["id"] == "brand-mention-watch"
+    assert "Monitor Queries" in queries_md
+    assert "Track sales and reputation signals." in queries_md
+    assert jobs["ok"] is True
+    assert len(jobs["monitorJobs"]) == 1
+    assert "Monitor Jobs" in jobs_md
+    assert "no external scheduler is started" in jobs_md
+    assert state["workflowState"] == "monitor_jobs_ready"
+    assert state["lastMonitorJob"]["queryId"] == "brand-mention-watch"
+    assert "Monitor jobs: `1` scheduled handoffs" in summary["summary"]
+
+
+def test_record_monitor_alert_and_weekly_digest_summarize_monitoring(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script("create-campaign", "--project-dir", str(project_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+    run_script(
+        "add-competitor",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "MeasureMax",
+        "--positioning",
+        "Truck measurement dashboards for aggregates",
+    )
+    run_script(
+        "track-competitor",
+        "--project-dir",
+        str(project_dir),
+        "--competitor",
+        "measuremax",
+        "--event-type",
+        "case study",
+        "--summary",
+        "Published a new quarry case study emphasizing loading accuracy.",
+        "--impact",
+        "high",
+    )
+    run_script("define-lead-signals", "--project-dir", str(project_dir))
+    run_script(
+        "score-lead",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "Jordan",
+        "--company",
+        "North Ridge Aggregates",
+        "--text",
+        "We are looking for truck volume measurement to reduce loading losses.",
+    )
+    run_script(
+        "record-performance",
+        "--project-dir",
+        str(project_dir),
+        "--channel",
+        "LinkedIn",
+        "--period",
+        "2026-W20",
+        "--metrics",
+        "impressions=1000,engagements=80,clicks=35,leads=4",
+    )
+    query = run_script(
+        "create-monitor-query",
+        "--project-dir",
+        str(project_dir),
+        "--name",
+        "High intent lead watch",
+        "--type",
+        "lead",
+        "--query",
+        '"looking for truck volume measurement"',
+    )
+    run_script("schedule-monitor", "--project-dir", str(project_dir))
+    alert = run_script(
+        "record-monitor-alert",
+        "--project-dir",
+        str(project_dir),
+        "--query-id",
+        query["monitorQuery"]["id"],
+        "--title",
+        "Aggregate operator asks for vendor recommendations",
+        "--summary",
+        "A procurement manager asked for truck volume measurement vendor recommendations.",
+        "--severity",
+        "high",
+        "--source",
+        "LinkedIn",
+        "--url",
+        "https://linkedin.example/post/lead",
+        "--tags",
+        "lead,aggregates,vendor",
+    )
+    digest = run_script(
+        "weekly-digest",
+        "--project-dir",
+        str(project_dir),
+        "--period",
+        "2026-W20",
+        "--audience",
+        "founder and marketing team",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    alerts_md = Path(alert["monitorAlertsPath"]).read_text(encoding="utf-8")
+    digest_md = Path(digest["weeklyDigestPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert alert["ok"] is True
+    assert alert["monitorAlert"]["severity"] == "high"
+    assert "Score the signal with score-lead" in alerts_md
+    assert digest["ok"] is True
+    assert digest["weeklyDigest"]["alertSummary"]["high"] == 1
+    assert digest["weeklyDigest"]["leadOpportunities"]
+    assert digest["weeklyDigest"]["competitorMoves"]
+    assert digest["weeklyDigest"]["performanceNotes"]
+    assert "Aggregate operator asks for vendor recommendations" in digest_md
+    assert "Lead Opportunities" in digest_md
+    assert "Competitor Moves" in digest_md
+    assert "Performance Notes" in digest_md
+    assert state["workflowState"] == "weekly_digest_ready"
+    assert "Weekly digest: `2026-W20` with `1` alerts" in summary["summary"]

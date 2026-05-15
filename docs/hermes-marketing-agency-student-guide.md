@@ -428,12 +428,83 @@ Phase 8 still does not call platform APIs. It prepares approved queue items for
 manual operators or future API integrations, then records evidence after a human
 or approved external tool performs the action.
 
-## Phase 9 Preview
+## What Phase 9 Adds
 
-The next phase can add monitoring automation:
+Phase 9 adds monitoring automation handoffs:
 
-- scheduled brand watch jobs
-- scheduled competitor watch jobs
-- saved lead-search queries
+- saved brand, competitor, lead, keyword, and hashtag queries
+- local monitor job definitions
 - alert reports
 - weekly digest generation
+
+Create a saved monitor query:
+
+```bash
+scripts/marketing_agency.py create-monitor-query \
+  --project-dir generated-marketing/acme-lidar \
+  --name "High intent lead watch" \
+  --type lead \
+  --query "\"looking for truck volume measurement\"" \
+  --channels "LinkedIn,X,Reddit" \
+  --priority high
+```
+
+Create local monitor job handoffs:
+
+```bash
+scripts/marketing_agency.py schedule-monitor \
+  --project-dir generated-marketing/acme-lidar \
+  --cadence weekly \
+  --owner "marketing ops" \
+  --destination "weekly digest"
+```
+
+Record an alert:
+
+```bash
+scripts/marketing_agency.py record-monitor-alert \
+  --project-dir generated-marketing/acme-lidar \
+  --query-id high-intent-lead-watch \
+  --title "Aggregate operator asks for vendor recommendations" \
+  --summary "A procurement manager asked for truck volume measurement vendor recommendations" \
+  --severity high \
+  --source LinkedIn \
+  --url "https://linkedin.example/post/lead" \
+  --tags "lead,aggregates,vendor"
+```
+
+Generate a weekly digest:
+
+```bash
+scripts/marketing_agency.py weekly-digest \
+  --project-dir generated-marketing/acme-lidar \
+  --period "2026-W20" \
+  --audience "founder and marketing team"
+```
+
+Phase 9 writes:
+
+```text
+docs/monitoring/monitor-queries.md
+docs/monitoring/monitor-queries.json
+docs/monitoring/monitor-jobs.md
+docs/monitoring/monitor-jobs.json
+docs/monitoring/monitor-alerts.md
+docs/monitoring/monitor-alerts.json
+docs/monitoring/weekly-digest.md
+docs/monitoring/weekly-digest.json
+docs/hermes-marketing-state.json
+```
+
+The monitor schedule is a local handoff file only. Phase 9 does not browse,
+start a real scheduler, call social APIs, reply to comments, send outreach, or
+update CRM records.
+
+## Phase 10 Preview
+
+The next large phase can add multi-brand workspace support:
+
+- brand/account registry
+- portfolio-level campaign summary
+- cross-brand weekly digest
+- brand-specific permissions and defaults

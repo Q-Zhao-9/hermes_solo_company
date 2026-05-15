@@ -8,8 +8,10 @@ Phase 5 adds performance snapshots, optimization recommendations, and manager
 dashboards. Phase 6 adds competitor intelligence and trend watch reports.
 Phase 7 adds approval packages, execution queues, change logs, and operator
 handoffs. Phase 8 adds platform integration handoff adapters and execution
-evidence capture. It avoids network access and does not publish, message,
-email, update CRM records, or modify external systems.
+evidence capture. Phase 9 adds saved monitoring queries, monitor schedule
+handoffs, alert reports, and weekly digest generation. It avoids network
+access and does not publish, message, email, update CRM records, schedule
+external jobs, or modify external systems.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ ANALYTICS_DIR = Path("docs") / "analytics"
 COMPETITOR_DIR = Path("docs") / "competitors"
 EXECUTION_DIR = Path("docs") / "execution"
 INTEGRATIONS_DIR = Path("docs") / "integrations"
+MONITORING_DIR = Path("docs") / "monitoring"
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,10 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("operatorHandoffs", [])
     data.setdefault("integrationHandoffs", [])
     data.setdefault("executionEvidence", [])
+    data.setdefault("monitorQueries", [])
+    data.setdefault("monitorJobs", [])
+    data.setdefault("monitorAlerts", [])
+    data.setdefault("weeklyDigests", [])
     return data
 
 
@@ -126,6 +133,10 @@ def default_state() -> dict[str, Any]:
         "operatorHandoffs": [],
         "integrationHandoffs": [],
         "executionEvidence": [],
+        "monitorQueries": [],
+        "monitorJobs": [],
+        "monitorAlerts": [],
+        "weeklyDigests": [],
     }
 
 
@@ -799,6 +810,132 @@ def capture_execution_evidence(args: argparse.Namespace) -> dict[str, Any]:
         "executionEvidenceJsonPath": str(evidence_json_path),
         "statePath": str(project_dir / STATE_PATH),
         "message": "Execution evidence captured in local state.",
+    }
+
+
+def create_monitor_query(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    query = build_monitor_query(
+        strategy=strategy,
+        name=args.name,
+        query_type=args.type,
+        query=args.query,
+        channels=parse_list(args.channels),
+        priority=args.priority,
+        notes=args.notes,
+    )
+    queries = upsert_by_id([item for item in state.get("monitorQueries", []) if isinstance(item, dict)], query)
+    queries_path = project_dir / MONITORING_DIR / "monitor-queries.md"
+    queries_json_path = project_dir / MONITORING_DIR / "monitor-queries.json"
+    write_text(queries_path, render_monitor_queries_markdown(queries))
+    write_text(queries_json_path, json.dumps(queries, indent=2))
+    record_monitor_query(project_dir, query)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "monitorQuery": query,
+        "monitorQueriesPath": str(queries_path),
+        "monitorQueriesJsonPath": str(queries_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Create local monitor job definitions with schedule-monitor, then record alerts as they are found.",
+    }
+
+
+def schedule_monitor(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    queries = select_monitor_queries(state, args.query_id)
+    if not queries:
+        return {"ok": False, "error": "No monitor queries found. Run create-monitor-query first."}
+    jobs = build_monitor_jobs(
+        queries=queries,
+        cadence=args.cadence,
+        owner=args.owner,
+        destination=args.destination,
+    )
+    existing = [item for item in state.get("monitorJobs", []) if isinstance(item, dict)]
+    merged = existing
+    for job in jobs:
+        merged = upsert_by_id(merged, job)
+    jobs_path = project_dir / MONITORING_DIR / "monitor-jobs.md"
+    jobs_json_path = project_dir / MONITORING_DIR / "monitor-jobs.json"
+    write_text(jobs_path, render_monitor_jobs_markdown(merged))
+    write_text(jobs_json_path, json.dumps(merged, indent=2))
+    record_monitor_jobs(project_dir, jobs)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "monitorJobs": jobs,
+        "monitorJobsPath": str(jobs_path),
+        "monitorJobsJsonPath": str(jobs_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Monitor job definitions created as local handoff artifacts. No external scheduler was started.",
+    }
+
+
+def record_monitor_alert(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    alert = build_monitor_alert(
+        state,
+        query_id=args.query_id,
+        title=args.title,
+        summary=args.summary,
+        severity=args.severity,
+        url=args.url,
+        source=args.source,
+        tags=parse_list(args.tags),
+    )
+    alerts = [item for item in state.get("monitorAlerts", []) if isinstance(item, dict)]
+    alerts.append(alert)
+    alerts_path = project_dir / MONITORING_DIR / "monitor-alerts.md"
+    alerts_json_path = project_dir / MONITORING_DIR / "monitor-alerts.json"
+    write_text(alerts_path, render_monitor_alerts_markdown(alerts))
+    write_text(alerts_json_path, json.dumps(alerts, indent=2))
+    record_monitor_alert_state(project_dir, alert)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "monitorAlert": alert,
+        "monitorAlertsPath": str(alerts_path),
+        "monitorAlertsJsonPath": str(alerts_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "next": "Use weekly-digest to summarize alerts, leads, competitors, performance, and execution evidence.",
+    }
+
+
+def weekly_digest(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    if not strategy:
+        return {"ok": False, "error": "No strategy found. Run create-strategy first."}
+    digest = build_weekly_digest(state, period=args.period, audience=args.audience)
+    digest_path = project_dir / MONITORING_DIR / "weekly-digest.md"
+    digest_json_path = project_dir / MONITORING_DIR / "weekly-digest.json"
+    write_text(digest_path, render_weekly_digest_markdown(digest))
+    write_text(digest_json_path, json.dumps(digest, indent=2))
+    record_weekly_digest(project_dir, digest)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "weeklyDigest": digest,
+        "weeklyDigestPath": str(digest_path),
+        "weeklyDigestJsonPath": str(digest_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Weekly monitoring digest generated from local project state.",
     }
 
 
@@ -2028,6 +2165,182 @@ def find_queue_item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
     return {}
 
 
+def build_monitor_query(
+    *,
+    strategy: dict[str, Any],
+    name: str,
+    query_type: str,
+    query: str,
+    channels: list[str],
+    priority: str,
+    notes: str,
+) -> dict[str, Any]:
+    query_id = slugify(name, fallback="monitor-query")
+    brand = str(strategy.get("brand") or "")
+    inferred_channels = channels or [str(channel) for channel in strategy.get("channels", [])[:4] if str(channel).strip()]
+    return {
+        "type": "monitor-query",
+        "id": query_id,
+        "name": name.strip(),
+        "monitorType": query_type,
+        "query": query.strip(),
+        "brand": brand,
+        "channels": inferred_channels or ["LinkedIn", "X", "Reddit", "SEO search"],
+        "priority": priority,
+        "notes": notes.strip(),
+        "reviewPolicy": "Review results before outreach, replies, CRM updates, or public responses.",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def select_monitor_queries(state: dict[str, Any], query_id: str) -> list[dict[str, Any]]:
+    queries = [item for item in state.get("monitorQueries", []) if isinstance(item, dict)]
+    if not query_id:
+        return queries
+    return [query for query in queries if str(query.get("id", "")) == query_id]
+
+
+def build_monitor_jobs(
+    *,
+    queries: list[dict[str, Any]],
+    cadence: str,
+    owner: str,
+    destination: str,
+) -> list[dict[str, Any]]:
+    jobs = []
+    for query in queries:
+        job_id = slugify(f"monitor-{query.get('id', 'query')}-{cadence}", fallback="monitor-job")
+        jobs.append(
+            {
+                "type": "monitor-job",
+                "id": job_id,
+                "queryId": query.get("id", ""),
+                "queryName": query.get("name", ""),
+                "monitorType": query.get("monitorType", ""),
+                "query": query.get("query", ""),
+                "channels": query.get("channels", []),
+                "cadence": cadence,
+                "owner": owner,
+                "destination": destination,
+                "status": "ready_for_operator",
+                "executionSteps": monitor_execution_steps(query),
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    return jobs
+
+
+def monitor_execution_steps(query: dict[str, Any]) -> list[str]:
+    channels = ", ".join(str(channel) for channel in query.get("channels", [])) or "selected channels"
+    monitor_type = str(query.get("monitorType") or "keyword")
+    return [
+        f"Search {channels} for the saved {monitor_type} query.",
+        "Record relevant findings with record-monitor-alert.",
+        "Score any buying-intent lead separately with score-lead before outreach.",
+        "Add competitor moves with track-competitor before changing campaign direction.",
+        "Summarize material findings in weekly-digest.",
+    ]
+
+
+def build_monitor_alert(
+    state: dict[str, Any],
+    *,
+    query_id: str,
+    title: str,
+    summary: str,
+    severity: str,
+    url: str,
+    source: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    query = next((item for item in state.get("monitorQueries", []) if isinstance(item, dict) and item.get("id") == query_id), {})
+    alert_id = slugify(f"alert-{query_id or source or severity}-{title}-{datetime.now(timezone.utc).isoformat()}", fallback="monitor-alert")
+    return {
+        "type": "monitor-alert",
+        "id": alert_id,
+        "queryId": query_id,
+        "queryName": query.get("name", ""),
+        "monitorType": query.get("monitorType", "general"),
+        "title": title.strip(),
+        "summary": summary.strip(),
+        "severity": severity,
+        "url": url.strip(),
+        "source": source.strip(),
+        "tags": tags,
+        "recommendedActions": alert_recommended_actions(severity, str(query.get("monitorType") or "general"), summary),
+        "approvalRequired": True,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def alert_recommended_actions(severity: str, monitor_type: str, summary: str) -> list[str]:
+    actions = []
+    lowered = f"{monitor_type} {summary}".lower()
+    if monitor_type == "lead" or any(word in lowered for word in ("looking for", "need", "rfp", "vendor", "recommendation")):
+        actions.append("Score the signal with score-lead before drafting outreach.")
+    if monitor_type == "competitor" or any(word in lowered for word in ("competitor", "launch", "pricing", "case study")):
+        actions.append("Record a competitor observation and review response campaign ideas.")
+    if monitor_type in {"brand", "hashtag"} or any(word in lowered for word in ("complaint", "mention", "review")):
+        actions.append("Prepare a reviewed community reply or escalation note before responding.")
+    if severity == "high":
+        actions.append("Review in the next operator meeting and decide whether campaign messaging should change.")
+    if not actions:
+        actions.append("Keep monitoring and include this item in the next weekly digest.")
+    return unique_list(actions)
+
+
+def build_weekly_digest(state: dict[str, Any], *, period: str, audience: str) -> dict[str, Any]:
+    strategy = state.get("lastStrategy", {}) if isinstance(state.get("lastStrategy"), dict) else {}
+    alerts = [item for item in state.get("monitorAlerts", []) if isinstance(item, dict)]
+    high_alerts = [item for item in alerts if item.get("severity") == "high"]
+    leads = [item for item in state.get("leadScorecards", []) if isinstance(item, dict)]
+    competitors = [item for item in state.get("competitorObservations", []) if isinstance(item, dict)]
+    performance = [item for item in state.get("performanceSnapshots", []) if isinstance(item, dict)]
+    evidence = [item for item in state.get("executionEvidence", []) if isinstance(item, dict)]
+    next_actions = weekly_next_actions(alerts, leads, competitors, performance)
+    return {
+        "type": "weekly-digest",
+        "brand": strategy.get("brand", ""),
+        "period": period or "latest week",
+        "audience": audience or "marketing team",
+        "monitorQueryCount": len([item for item in state.get("monitorQueries", []) if isinstance(item, dict)]),
+        "monitorJobCount": len([item for item in state.get("monitorJobs", []) if isinstance(item, dict)]),
+        "alertSummary": {
+            "total": len(alerts),
+            "high": len(high_alerts),
+            "medium": sum(1 for item in alerts if item.get("severity") == "medium"),
+            "low": sum(1 for item in alerts if item.get("severity") == "low"),
+        },
+        "highPriorityAlerts": high_alerts[-5:],
+        "leadOpportunities": sorted(leads, key=lambda item: int(item.get("score", 0) or 0), reverse=True)[:5],
+        "competitorMoves": competitors[-5:],
+        "performanceNotes": performance[-3:],
+        "executionEvidence": evidence[-5:],
+        "nextActions": next_actions,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def weekly_next_actions(
+    alerts: list[dict[str, Any]],
+    leads: list[dict[str, Any]],
+    competitors: list[dict[str, Any]],
+    performance: list[dict[str, Any]],
+) -> list[str]:
+    actions = []
+    if any(alert.get("severity") == "high" for alert in alerts):
+        actions.append("Review high-severity alerts and decide owner, response, or campaign change.")
+    if any(str(lead.get("grade")) == "hot" for lead in leads):
+        actions.append("Review hot leads and prepare approved outreach before contact.")
+    if competitors:
+        actions.append("Update competitor intelligence report if the latest moves affect positioning.")
+    if performance:
+        actions.append("Compare alert themes with performance snapshots before changing content cadence.")
+    if not actions:
+        actions.append("Keep current monitoring cadence and add more saved queries if coverage is thin.")
+    return actions
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -2130,8 +2443,17 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     evidence = state.get("lastExecutionEvidence", {}) if isinstance(state.get("lastExecutionEvidence"), dict) else {}
     if evidence.get("id"):
         lines.append(f"Execution evidence: `{evidence.get('status')}` for `{evidence.get('platform')}`")
+    monitor_job = state.get("lastMonitorJob", {}) if isinstance(state.get("lastMonitorJob"), dict) else {}
+    if monitor_job.get("id"):
+        lines.append(f"Monitor jobs: `{len(state.get('monitorJobs', []))}` scheduled handoffs")
+    monitor_alert = state.get("lastMonitorAlert", {}) if isinstance(state.get("lastMonitorAlert"), dict) else {}
+    if monitor_alert.get("id"):
+        lines.append(f"Latest alert: `{monitor_alert.get('severity')}` - `{monitor_alert.get('title')}`")
+    weekly = state.get("lastWeeklyDigest", {}) if isinstance(state.get("lastWeeklyDigest"), dict) else {}
+    if weekly.get("period"):
+        lines.append(f"Weekly digest: `{weekly.get('period')}` with `{weekly.get('alertSummary', {}).get('total', 0)}` alerts")
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, or prepare integration handoff.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, prepare integration handoff, or monitor market signals.")
     return "\n".join(lines)
 
 
@@ -2298,6 +2620,42 @@ def record_execution_evidence(project_dir: Path, evidence: dict[str, Any]) -> No
     state.setdefault("executionEvidence", []).append(evidence)
     state["lastExecutionEvidence"] = evidence
     state["workflowState"] = "execution_evidence_captured"
+    write_state(project_dir, state)
+
+
+def record_monitor_query(project_dir: Path, query: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state["monitorQueries"] = upsert_by_id([item for item in state.get("monitorQueries", []) if isinstance(item, dict)], query)
+    state["lastMonitorQuery"] = query
+    state["workflowState"] = "monitor_query_ready"
+    write_state(project_dir, state)
+
+
+def record_monitor_jobs(project_dir: Path, jobs: list[dict[str, Any]]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    merged = [item for item in state.get("monitorJobs", []) if isinstance(item, dict)]
+    for job in jobs:
+        merged = upsert_by_id(merged, job)
+    state["monitorJobs"] = merged
+    if jobs:
+        state["lastMonitorJob"] = jobs[-1]
+    state["workflowState"] = "monitor_jobs_ready"
+    write_state(project_dir, state)
+
+
+def record_monitor_alert_state(project_dir: Path, alert: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("monitorAlerts", []).append(alert)
+    state["lastMonitorAlert"] = alert
+    state["workflowState"] = "monitor_alert_recorded"
+    write_state(project_dir, state)
+
+
+def record_weekly_digest(project_dir: Path, digest: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("weeklyDigests", []).append(digest)
+    state["lastWeeklyDigest"] = digest
+    state["workflowState"] = "weekly_digest_ready"
     write_state(project_dir, state)
 
 
@@ -3235,6 +3593,114 @@ def render_execution_evidence_markdown(evidence_items: list[dict[str, Any]]) -> 
     return "\n".join(lines)
 
 
+def render_monitor_queries_markdown(queries: list[dict[str, Any]]) -> str:
+    lines = ["# Monitor Queries", "", "- Source: user-supplied saved queries; no live search is performed.", ""]
+    for query in queries:
+        lines.extend(
+            [
+                f"## {query.get('name', '')}",
+                "",
+                f"- ID: {query.get('id', '')}",
+                f"- Type: {query.get('monitorType', '')}",
+                f"- Query: {query.get('query', '')}",
+                f"- Priority: {query.get('priority', '')}",
+                "- Channels: " + ", ".join(query.get("channels", [])),
+                f"- Review policy: {query.get('reviewPolicy', '')}",
+                "",
+            ]
+        )
+        if query.get("notes"):
+            lines.extend(["### Notes", str(query.get("notes", "")), ""])
+    return "\n".join(lines)
+
+
+def render_monitor_jobs_markdown(jobs: list[dict[str, Any]]) -> str:
+    lines = ["# Monitor Jobs", "", "- Status: local handoff definitions only; no external scheduler is started.", ""]
+    for job in jobs:
+        lines.extend(
+            [
+                f"## {job.get('queryName', '')}",
+                "",
+                f"- Job ID: {job.get('id', '')}",
+                f"- Query ID: {job.get('queryId', '')}",
+                f"- Type: {job.get('monitorType', '')}",
+                f"- Cadence: {job.get('cadence', '')}",
+                f"- Owner: {job.get('owner', '')}",
+                f"- Destination: {job.get('destination', '')}",
+                f"- Status: {job.get('status', '')}",
+                "",
+                "### Execution Steps",
+                *[f"- {step}" for step in job.get("executionSteps", [])],
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_monitor_alerts_markdown(alerts: list[dict[str, Any]]) -> str:
+    lines = ["# Monitor Alerts", "", "- Status: review required before reply, outreach, or CRM update.", ""]
+    for alert in alerts:
+        lines.extend(
+            [
+                f"## {alert.get('title', '')}",
+                "",
+                f"- Alert ID: {alert.get('id', '')}",
+                f"- Query: {alert.get('queryName') or alert.get('queryId') or 'general'}",
+                f"- Type: {alert.get('monitorType', '')}",
+                f"- Severity: {alert.get('severity', '')}",
+                f"- Source: {alert.get('source', '')}",
+                f"- URL: {alert.get('url', '')}",
+                f"- Tags: {', '.join(alert.get('tags', []))}",
+                "",
+                "### Summary",
+                str(alert.get("summary", "")),
+                "",
+                "### Recommended Actions",
+                *[f"- {item}" for item in alert.get("recommendedActions", [])],
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_weekly_digest_markdown(digest: dict[str, Any]) -> str:
+    summary = digest.get("alertSummary", {}) if isinstance(digest.get("alertSummary"), dict) else {}
+    lines = [
+        f"# Weekly Marketing Digest: {digest.get('brand', 'Marketing Project')}",
+        "",
+        f"- Period: {digest.get('period', '')}",
+        f"- Audience: {digest.get('audience', '')}",
+        f"- Monitor queries: {digest.get('monitorQueryCount', 0)}",
+        f"- Monitor jobs: {digest.get('monitorJobCount', 0)}",
+        "",
+        "## Alert Summary",
+        f"- Total: {summary.get('total', 0)}",
+        f"- High: {summary.get('high', 0)}",
+        f"- Medium: {summary.get('medium', 0)}",
+        f"- Low: {summary.get('low', 0)}",
+        "",
+        "## High Priority Alerts",
+    ]
+    for alert in digest.get("highPriorityAlerts", []):
+        lines.append(f"- {alert.get('title', '')}: {alert.get('summary', '')}")
+    lines.extend(["", "## Lead Opportunities"])
+    for lead in digest.get("leadOpportunities", []):
+        lines.append(f"- {lead.get('company') or lead.get('name')}: {lead.get('grade')} score {lead.get('score')} - {lead.get('suggestedAction', '')}")
+    lines.extend(["", "## Competitor Moves"])
+    for observation in digest.get("competitorMoves", []):
+        lines.append(f"- {observation.get('competitorName', '')}: {observation.get('summary', '')}")
+    lines.extend(["", "## Performance Notes"])
+    for snapshot in digest.get("performanceNotes", []):
+        derived = snapshot.get("derivedMetrics", {}) if isinstance(snapshot.get("derivedMetrics"), dict) else {}
+        lines.append(f"- {snapshot.get('channel', '')} {snapshot.get('period', '')}: CTR {percent(derived.get('ctr', 0))}, lead rate {percent(derived.get('leadRate', 0))}")
+    lines.extend(["", "## Execution Evidence"])
+    for evidence in digest.get("executionEvidence", []):
+        lines.append(f"- {evidence.get('platform', '')}: {evidence.get('status', '')} {evidence.get('url', '')}")
+    lines.extend(["", "## Next Actions"])
+    lines.extend(f"- {item}" for item in digest.get("nextActions", []))
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -3419,6 +3885,41 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--operator", default="", help="Operator or integration name.")
     evidence.add_argument("--notes", default="", help="Evidence notes.")
     evidence.set_defaults(func=capture_execution_evidence)
+
+    monitor_query = subparsers.add_parser("create-monitor-query", help="Create a saved brand, competitor, lead, keyword, or hashtag monitor query.")
+    monitor_query.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    monitor_query.add_argument("--name", required=True, help="Human-readable saved query name.")
+    monitor_query.add_argument("--type", choices=("brand", "competitor", "lead", "keyword", "hashtag"), default="keyword", help="Monitoring query type.")
+    monitor_query.add_argument("--query", required=True, help="Search query text to run manually or through future integrations.")
+    monitor_query.add_argument("--channels", default="", help="Comma-separated channels to monitor.")
+    monitor_query.add_argument("--priority", choices=("low", "medium", "high"), default="medium", help="Monitoring priority.")
+    monitor_query.add_argument("--notes", default="", help="Operator notes or query context.")
+    monitor_query.set_defaults(func=create_monitor_query)
+
+    monitor_schedule = subparsers.add_parser("schedule-monitor", help="Create local monitor job handoffs for saved queries.")
+    monitor_schedule.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    monitor_schedule.add_argument("--query-id", default="", help="Specific saved query ID. Empty schedules all saved queries.")
+    monitor_schedule.add_argument("--cadence", choices=("daily", "weekly", "monthly"), default="weekly", help="Review cadence.")
+    monitor_schedule.add_argument("--owner", default="", help="Owner responsible for checking the saved query.")
+    monitor_schedule.add_argument("--destination", default="weekly digest", help="Where findings should be summarized.")
+    monitor_schedule.set_defaults(func=schedule_monitor)
+
+    monitor_alert = subparsers.add_parser("record-monitor-alert", help="Record a monitoring alert found by a human or approved integration.")
+    monitor_alert.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    monitor_alert.add_argument("--query-id", default="", help="Saved query ID connected to this alert.")
+    monitor_alert.add_argument("--title", required=True, help="Short alert title.")
+    monitor_alert.add_argument("--summary", required=True, help="Alert details.")
+    monitor_alert.add_argument("--severity", choices=("low", "medium", "high"), default="medium", help="Alert severity.")
+    monitor_alert.add_argument("--url", default="", help="Source URL or permalink.")
+    monitor_alert.add_argument("--source", default="", help="Source platform or channel.")
+    monitor_alert.add_argument("--tags", default="", help="Comma-separated alert tags.")
+    monitor_alert.set_defaults(func=record_monitor_alert)
+
+    digest = subparsers.add_parser("weekly-digest", help="Generate a weekly monitoring digest from local marketing state.")
+    digest.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    digest.add_argument("--period", default="latest week", help="Digest period.")
+    digest.add_argument("--audience", default="marketing team", help="Digest audience.")
+    digest.set_defaults(func=weekly_digest)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")
