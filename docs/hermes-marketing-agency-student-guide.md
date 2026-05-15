@@ -381,12 +381,59 @@ These files prepare execution, but they do not execute it. Publishing posts,
 sending email, deploying pages, changing ads, or updating CRM records still
 requires explicit approval and the correct platform integration.
 
-## Phase 8 Preview
+## What Phase 8 Adds
 
-The next phase can add platform integration adapters:
+Phase 8 adds platform integration handoff adapters:
 
 - approved social publishing adapters
 - email campaign provider handoff
 - website/WordPress publishing bridge
 - CRM import mapping
 - execution evidence capture
+
+Prepare a platform handoff after approval:
+
+```bash
+scripts/marketing_agency.py prepare-integration-handoff \
+  --project-dir generated-marketing/acme-lidar \
+  --platform social \
+  --provider LinkedIn \
+  --destination "company page"
+```
+
+Capture execution evidence:
+
+```bash
+scripts/marketing_agency.py capture-execution-evidence \
+  --project-dir generated-marketing/acme-lidar \
+  --item-id "<queue item id>" \
+  --platform LinkedIn \
+  --status published \
+  --url "https://linkedin.example/post/1" \
+  --screenshot "screenshots/post-1.png" \
+  --operator "ops team"
+```
+
+Phase 8 writes:
+
+```text
+docs/integrations/<platform-provider>-handoff.md
+docs/integrations/<platform-provider>-handoff.json
+docs/integrations/execution-evidence.md
+docs/integrations/execution-evidence.json
+docs/hermes-marketing-state.json
+```
+
+Phase 8 still does not call platform APIs. It prepares approved queue items for
+manual operators or future API integrations, then records evidence after a human
+or approved external tool performs the action.
+
+## Phase 9 Preview
+
+The next phase can add monitoring automation:
+
+- scheduled brand watch jobs
+- scheduled competitor watch jobs
+- saved lead-search queries
+- alert reports
+- weekly digest generation

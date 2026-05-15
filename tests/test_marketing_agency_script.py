@@ -852,3 +852,128 @@ def test_record_approval_and_operator_handoff_create_change_log_and_handoff(tmp_
     assert state["workflowState"] == "operator_handoff_ready"
     assert state["lastApprovalPackage"]["approvalStatus"] == "approved"
     assert "Operator handoff: `ready`" in summary["summary"]
+
+
+def test_prepare_integration_handoff_requires_approval_and_exports_platform_file(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script("create-campaign", "--project-dir", str(project_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+    run_script("generate-posts", "--project-dir", str(project_dir), "--channels", "LinkedIn,Email")
+    package = run_script("create-approval-package", "--project-dir", str(project_dir), "--channels", "LinkedIn,Email")
+
+    blocked = run_script(
+        "prepare-integration-handoff",
+        "--project-dir",
+        str(project_dir),
+        "--package-id",
+        package["approvalPackage"]["id"],
+        "--platform",
+        "social",
+        "--provider",
+        "LinkedIn",
+        check=False,
+    )
+    assert blocked["ok"] is False
+
+    run_script(
+        "record-approval",
+        "--project-dir",
+        str(project_dir),
+        "--package-id",
+        package["approvalPackage"]["id"],
+        "--decision",
+        "approved",
+        "--approver",
+        "Jane",
+    )
+    result = run_script(
+        "prepare-integration-handoff",
+        "--project-dir",
+        str(project_dir),
+        "--package-id",
+        package["approvalPackage"]["id"],
+        "--platform",
+        "social",
+        "--provider",
+        "LinkedIn",
+        "--destination",
+        "company page",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    markdown = Path(result["integrationHandoffPath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["integrationHandoff"]["platform"] == "social"
+    assert len(result["integrationHandoff"]["items"]) == 1
+    assert "Integration Handoff: social" in markdown
+    assert "LinkedIn" in markdown
+    assert state["workflowState"] == "integration_handoff_ready"
+    assert "Integration handoff: `social` with `1` items" in summary["summary"]
+
+
+def test_capture_execution_evidence_records_evidence_for_queue_item(tmp_path):
+    strategy = run_script(
+        "create-strategy",
+        "--brand",
+        "Acme LiDAR",
+        "--business",
+        "LiDAR truck volume measurement systems for industrial logistics.",
+        "--audience",
+        "mining companies and aggregate producers",
+        "--goal",
+        "Generate qualified demo requests",
+        "--offer",
+        "automated truck volume measurement",
+        "--output-dir",
+        str(tmp_path),
+    )
+    project_dir = Path(strategy["projectDir"])
+    run_script("create-campaign", "--project-dir", str(project_dir), "--name", "Reduce Loading Loss", "--objective", "reduce loading losses by 5%")
+    run_script("generate-posts", "--project-dir", str(project_dir), "--channels", "LinkedIn")
+    package = run_script("create-approval-package", "--project-dir", str(project_dir), "--channels", "LinkedIn")
+    item_id = package["approvalPackage"]["publishingQueue"][0]["id"]
+
+    result = run_script(
+        "capture-execution-evidence",
+        "--project-dir",
+        str(project_dir),
+        "--item-id",
+        item_id,
+        "--platform",
+        "LinkedIn",
+        "--url",
+        "https://linkedin.example/post/1",
+        "--screenshot",
+        "screenshots/post-1.png",
+        "--status",
+        "published",
+        "--operator",
+        "ops team",
+        "--notes",
+        "Published manually after approval.",
+    )
+    summary = run_script("summary", "--project-dir", str(project_dir))
+
+    markdown = Path(result["executionEvidencePath"]).read_text(encoding="utf-8")
+    state = json.loads((project_dir / "docs" / "hermes-marketing-state.json").read_text(encoding="utf-8"))
+    assert result["ok"] is True
+    assert result["executionEvidence"]["itemId"] == item_id
+    assert result["executionEvidence"]["itemTitle"]
+    assert "https://linkedin.example/post/1" in markdown
+    assert state["workflowState"] == "execution_evidence_captured"
+    assert "Execution evidence: `published` for `LinkedIn`" in summary["summary"]

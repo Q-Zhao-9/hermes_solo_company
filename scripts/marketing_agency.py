@@ -7,8 +7,9 @@ adds lead signal definitions, lead scoring, outreach drafts, and CRM export.
 Phase 5 adds performance snapshots, optimization recommendations, and manager
 dashboards. Phase 6 adds competitor intelligence and trend watch reports.
 Phase 7 adds approval packages, execution queues, change logs, and operator
-handoffs. It avoids network access and does not publish, message, email, update
-CRM records, or modify external systems.
+handoffs. Phase 8 adds platform integration handoff adapters and execution
+evidence capture. It avoids network access and does not publish, message,
+email, update CRM records, or modify external systems.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ LEADS_DIR = Path("docs") / "leads"
 ANALYTICS_DIR = Path("docs") / "analytics"
 COMPETITOR_DIR = Path("docs") / "competitors"
 EXECUTION_DIR = Path("docs") / "execution"
+INTEGRATIONS_DIR = Path("docs") / "integrations"
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,8 @@ def read_state(state_file: Path) -> dict[str, Any]:
     data.setdefault("approvalPackages", [])
     data.setdefault("approvalDecisions", [])
     data.setdefault("operatorHandoffs", [])
+    data.setdefault("integrationHandoffs", [])
+    data.setdefault("executionEvidence", [])
     return data
 
 
@@ -120,6 +124,8 @@ def default_state() -> dict[str, Any]:
         "approvalPackages": [],
         "approvalDecisions": [],
         "operatorHandoffs": [],
+        "integrationHandoffs": [],
+        "executionEvidence": [],
     }
 
 
@@ -725,6 +731,74 @@ def operator_handoff(args: argparse.Namespace) -> dict[str, Any]:
         "operatorHandoffJsonPath": str(handoff_json_path),
         "statePath": str(project_dir / STATE_PATH),
         "message": "Operator handoff generated for human execution.",
+    }
+
+
+def prepare_integration_handoff(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    package = select_approval_package(state, args.package_id)
+    if not package:
+        return {"ok": False, "error": "No approval package found. Run create-approval-package first."}
+    if package.get("approvalStatus") != "approved" and not args.force:
+        return {"ok": False, "error": "Approval package is not approved. Run record-approval --decision approved or pass --force for draft handoff."}
+    handoff = build_integration_handoff(
+        state,
+        package=package,
+        platform=args.platform,
+        provider=args.provider,
+        destination=args.destination,
+        mode=args.mode,
+    )
+    slug = slugify(f"{args.platform}-{args.provider or 'handoff'}", fallback="integration-handoff")
+    handoff_path = project_dir / INTEGRATIONS_DIR / f"{slug}-handoff.md"
+    handoff_json_path = project_dir / INTEGRATIONS_DIR / f"{slug}-handoff.json"
+    write_text(handoff_path, render_integration_handoff_markdown(handoff))
+    write_text(handoff_json_path, json.dumps(handoff, indent=2))
+    record_integration_handoff(project_dir, {**handoff, "path": str(handoff_path)})
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "integrationHandoff": handoff,
+        "integrationHandoffPath": str(handoff_path),
+        "integrationHandoffJsonPath": str(handoff_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Integration handoff prepared. It does not call the platform API or execute the queue.",
+    }
+
+
+def capture_execution_evidence(args: argparse.Namespace) -> dict[str, Any]:
+    project_dir = Path(args.project_dir).expanduser().resolve()
+    if not project_dir.exists():
+        return {"ok": False, "error": f"project directory does not exist: {project_dir}"}
+    state = read_state(project_dir / STATE_PATH)
+    evidence = build_execution_evidence(
+        state,
+        item_id=args.item_id,
+        platform=args.platform,
+        url=args.url,
+        screenshot=args.screenshot,
+        status=args.status,
+        operator=args.operator,
+        notes=args.notes,
+    )
+    evidence_items = [item for item in state.get("executionEvidence", []) if isinstance(item, dict)]
+    evidence_items.append(evidence)
+    evidence_path = project_dir / INTEGRATIONS_DIR / "execution-evidence.md"
+    evidence_json_path = project_dir / INTEGRATIONS_DIR / "execution-evidence.json"
+    write_text(evidence_path, render_execution_evidence_markdown(evidence_items))
+    write_text(evidence_json_path, json.dumps(evidence_items, indent=2))
+    record_execution_evidence(project_dir, evidence)
+    return {
+        "ok": True,
+        "projectDir": str(project_dir),
+        "executionEvidence": evidence,
+        "executionEvidencePath": str(evidence_path),
+        "executionEvidenceJsonPath": str(evidence_json_path),
+        "statePath": str(project_dir / STATE_PATH),
+        "message": "Execution evidence captured in local state.",
     }
 
 
@@ -1833,6 +1907,127 @@ def build_operator_handoff(state: dict[str, Any], *, package: dict[str, Any], op
     }
 
 
+def build_integration_handoff(
+    state: dict[str, Any],
+    *,
+    package: dict[str, Any],
+    platform: str,
+    provider: str,
+    destination: str,
+    mode: str,
+) -> dict[str, Any]:
+    queue = package.get("publishingQueue", []) if isinstance(package.get("publishingQueue"), list) else []
+    adapter_items = [integration_item(item, platform=platform, provider=provider, destination=destination) for item in queue if item_matches_platform(item, platform)]
+    return {
+        "type": "integration-handoff",
+        "id": slugify(f"integration-{platform}-{provider}-{package.get('id', '')}", fallback="integration-handoff"),
+        "packageId": package.get("id", ""),
+        "platform": platform,
+        "provider": provider,
+        "destination": destination,
+        "mode": mode,
+        "approvalStatus": package.get("approvalStatus", "pending"),
+        "items": adapter_items,
+        "configChecklist": integration_config_checklist(platform, provider),
+        "executionPolicy": [
+            "This file is a handoff artifact, not a live API call.",
+            "Use only after explicit approval is recorded.",
+            "Capture execution evidence after each platform action.",
+        ],
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def item_matches_platform(item: dict[str, Any], platform: str) -> bool:
+    text = f"{item.get('source', '')} {item.get('channel', '')}".lower()
+    if platform == "social":
+        return any(word in text for word in ("linkedin", "x", "twitter", "youtube", "instagram", "tiktok", "facebook", "discord", "reddit"))
+    if platform == "email":
+        return "email" in text or "outreach" in text
+    if platform in {"website", "wordpress"}:
+        return any(word in text for word in ("seo", "blog", "website", "wordpress"))
+    if platform == "crm":
+        return "outreach" in text or "lead" in text
+    return True
+
+
+def integration_item(item: dict[str, Any], *, platform: str, provider: str, destination: str) -> dict[str, Any]:
+    return {
+        "id": item.get("id", ""),
+        "source": item.get("source", ""),
+        "channel": item.get("channel", ""),
+        "title": item.get("title", ""),
+        "recommendedAction": integration_action(platform, item),
+        "provider": provider,
+        "destination": destination,
+        "status": "ready_for_operator",
+    }
+
+
+def integration_action(platform: str, item: dict[str, Any]) -> str:
+    if platform == "social":
+        return "Create or schedule the approved social post in the selected platform."
+    if platform == "email":
+        return "Create draft campaign/message in the email provider and send test before production."
+    if platform == "wordpress":
+        return "Create or update WordPress draft content, then preview before publishing."
+    if platform == "website":
+        return "Create website/CMS draft or deploy request, then capture preview URL."
+    if platform == "crm":
+        return "Import or update CRM lead/task fields after approval."
+    return item.get("action", "execute approved item")
+
+
+def integration_config_checklist(platform: str, provider: str) -> list[str]:
+    base = ["Confirm API credentials or operator login are available.", "Confirm destination/account is correct.", "Confirm rollback or undo path."]
+    if platform == "social":
+        return [f"Confirm {provider or 'social'} account/page permissions.", "Confirm media assets and link previews.", *base]
+    if platform == "email":
+        return [f"Confirm {provider or 'email'} list/segment and unsubscribe compliance.", "Send an internal test email.", *base]
+    if platform in {"website", "wordpress"}:
+        return [f"Confirm {provider or platform} draft/preview environment.", "Check SEO fields and internal links.", *base]
+    if platform == "crm":
+        return [f"Confirm {provider or 'CRM'} field mapping.", "Run import on a small sample first.", *base]
+    return base
+
+
+def build_execution_evidence(
+    state: dict[str, Any],
+    *,
+    item_id: str,
+    platform: str,
+    url: str,
+    screenshot: str,
+    status: str,
+    operator: str,
+    notes: str,
+) -> dict[str, Any]:
+    item = find_queue_item(state, item_id)
+    return {
+        "type": "execution-evidence",
+        "id": slugify(f"evidence-{item_id or platform}-{datetime.now(timezone.utc).isoformat()}", fallback="execution-evidence"),
+        "itemId": item_id,
+        "itemTitle": item.get("title", ""),
+        "platform": platform,
+        "url": url,
+        "screenshot": screenshot,
+        "status": status,
+        "operator": operator,
+        "notes": notes.strip(),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def find_queue_item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
+    for package in state.get("approvalPackages", []):
+        if not isinstance(package, dict):
+            continue
+        for item in package.get("publishingQueue", []):
+            if isinstance(item, dict) and item.get("id") == item_id:
+                return item
+    return {}
+
+
 def build_campaign(spec: CampaignSpec, strategy: dict[str, Any]) -> dict[str, Any]:
     themes = strategy.get("themes", []) if isinstance(strategy.get("themes"), list) else []
     if not themes:
@@ -1929,8 +2124,14 @@ def format_summary(project_dir: Path, state: dict[str, Any]) -> str:
     handoff = state.get("lastOperatorHandoff", {}) if isinstance(state.get("lastOperatorHandoff"), dict) else {}
     if handoff.get("id"):
         lines.append(f"Operator handoff: `{handoff.get('handoffStatus', 'waiting_for_approval')}`")
+    integration = state.get("lastIntegrationHandoff", {}) if isinstance(state.get("lastIntegrationHandoff"), dict) else {}
+    if integration.get("id"):
+        lines.append(f"Integration handoff: `{integration.get('platform')}` with `{len(integration.get('items', []))}` items")
+    evidence = state.get("lastExecutionEvidence", {}) if isinstance(state.get("lastExecutionEvidence"), dict) else {}
+    if evidence.get("id"):
+        lines.append(f"Execution evidence: `{evidence.get('status')}` for `{evidence.get('platform')}`")
     lines.append("")
-    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, or package execution.")
+    lines.append("Next: create a campaign, generate content, prepare SEO/GEO tasks, score leads, review analytics, track competitors, package execution, or prepare integration handoff.")
     return "\n".join(lines)
 
 
@@ -2081,6 +2282,22 @@ def record_operator_handoff(project_dir: Path, handoff: dict[str, Any]) -> None:
     state.setdefault("operatorHandoffs", []).append(handoff)
     state["lastOperatorHandoff"] = handoff
     state["workflowState"] = "operator_handoff_ready"
+    write_state(project_dir, state)
+
+
+def record_integration_handoff(project_dir: Path, handoff: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("integrationHandoffs", []).append(handoff)
+    state["lastIntegrationHandoff"] = handoff
+    state["workflowState"] = "integration_handoff_ready"
+    write_state(project_dir, state)
+
+
+def record_execution_evidence(project_dir: Path, evidence: dict[str, Any]) -> None:
+    state = read_state(project_dir / STATE_PATH)
+    state.setdefault("executionEvidence", []).append(evidence)
+    state["lastExecutionEvidence"] = evidence
+    state["workflowState"] = "execution_evidence_captured"
     write_state(project_dir, state)
 
 
@@ -2977,6 +3194,47 @@ def render_operator_handoff_markdown(handoff: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_integration_handoff_markdown(handoff: dict[str, Any]) -> str:
+    lines = [
+        f"# Integration Handoff: {handoff.get('platform', '')}",
+        "",
+        f"- Provider: {handoff.get('provider', '')}",
+        f"- Destination: {handoff.get('destination', '')}",
+        f"- Mode: {handoff.get('mode', '')}",
+        f"- Approval status: {handoff.get('approvalStatus', '')}",
+        "",
+        "## Items",
+    ]
+    for item in handoff.get("items", []):
+        lines.append(f"- {item.get('id', '')}: {item.get('title', '')} -> {item.get('recommendedAction', '')}")
+    lines.extend(["", "## Config Checklist"])
+    lines.extend(f"- {item}" for item in handoff.get("configChecklist", []))
+    lines.extend(["", "## Execution Policy"])
+    lines.extend(f"- {item}" for item in handoff.get("executionPolicy", []))
+    return "\n".join(lines)
+
+
+def render_execution_evidence_markdown(evidence_items: list[dict[str, Any]]) -> str:
+    lines = ["# Execution Evidence", ""]
+    for item in evidence_items:
+        lines.extend(
+            [
+                f"## {item.get('platform', '')}: {item.get('itemId', '')}",
+                "",
+                f"- Status: {item.get('status', '')}",
+                f"- Operator: {item.get('operator', '')}",
+                f"- URL: {item.get('url', '')}",
+                f"- Screenshot: {item.get('screenshot', '')}",
+                f"- Created: {item.get('createdAt', '')}",
+                "",
+                "### Notes",
+                str(item.get("notes", "")),
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -3140,6 +3398,27 @@ def build_parser() -> argparse.ArgumentParser:
     handoff.add_argument("--package-id", default="", help="Approval package ID. Defaults to latest package.")
     handoff.add_argument("--operator", default="", help="Human operator name or team.")
     handoff.set_defaults(func=operator_handoff)
+
+    integration = subparsers.add_parser("prepare-integration-handoff", help="Prepare platform-specific handoff files for approved queue items.")
+    integration.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    integration.add_argument("--package-id", default="", help="Approval package ID. Defaults to latest package.")
+    integration.add_argument("--platform", choices=("social", "email", "website", "wordpress", "crm"), required=True, help="Target platform category.")
+    integration.add_argument("--provider", default="", help="Provider name, such as LinkedIn, Mailchimp, WordPress, HubSpot.")
+    integration.add_argument("--destination", default="", help="Target account, list, site, or CRM pipeline.")
+    integration.add_argument("--mode", choices=("manual", "api-ready", "import"), default="manual", help="Execution mode for the handoff.")
+    integration.add_argument("--force", action="store_true", help="Allow draft handoff even when package is not approved.")
+    integration.set_defaults(func=prepare_integration_handoff)
+
+    evidence = subparsers.add_parser("capture-execution-evidence", help="Capture local evidence after a human or approved integration executes an item.")
+    evidence.add_argument("--project-dir", default=".", help="Marketing project directory.")
+    evidence.add_argument("--item-id", default="", help="Publishing queue item ID.")
+    evidence.add_argument("--platform", required=True, help="Platform where execution happened.")
+    evidence.add_argument("--url", default="", help="Published URL, permalink, or platform record URL.")
+    evidence.add_argument("--screenshot", default="", help="Screenshot or artifact path.")
+    evidence.add_argument("--status", choices=("published", "sent", "scheduled", "imported", "failed", "skipped"), required=True, help="Execution status.")
+    evidence.add_argument("--operator", default="", help="Operator or integration name.")
+    evidence.add_argument("--notes", default="", help="Evidence notes.")
+    evidence.set_defaults(func=capture_execution_evidence)
 
     summary = subparsers.add_parser("summary", help="Return a Discord-friendly marketing project status summary.")
     summary.add_argument("--project-dir", default=".", help="Marketing project directory.")

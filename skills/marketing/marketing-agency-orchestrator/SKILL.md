@@ -6,7 +6,7 @@ metadata:
   hermes:
     tags: [marketing, seo, social-media, growth, campaigns, ai-solo-company]
     category: marketing
-    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
+    related_skills: [marketing-strategy, create-campaign, social-calendar, content-studio, seo-geo-growth, lead-detection, marketing-analytics, competitor-intelligence, campaign-execution, platform-integration-handoff, website-agency-orchestrator, website-seo-content, seo-optimize, xurl, youtube-content, himalaya]
 ---
 
 # Marketing Agency Orchestrator
@@ -79,6 +79,13 @@ scripts/marketing_agency.py record-approval --project-dir "<project dir>" --deci
 scripts/marketing_agency.py operator-handoff --project-dir "<project dir>" --operator "<team>"
 ```
 
+Phase 8 supports platform integration handoff and evidence capture:
+
+```bash
+scripts/marketing_agency.py prepare-integration-handoff --project-dir "<project dir>" --platform social --provider LinkedIn
+scripts/marketing_agency.py capture-execution-evidence --project-dir "<project dir>" --item-id "<item>" --platform LinkedIn --status published --url "<url>"
+```
+
 ## Routing
 
 - **Strategy**: use `marketing-strategy` and `create-strategy`.
@@ -95,6 +102,9 @@ scripts/marketing_agency.py operator-handoff --project-dir "<project dir>" --ope
   `add-competitor`, `track-competitor`, and `competitor-report`.
 - **Approval and execution handoff**: use `campaign-execution`,
   `create-approval-package`, `record-approval`, and `operator-handoff`.
+- **Platform handoff and execution evidence**: use
+  `platform-integration-handoff`, `prepare-integration-handoff`, and
+  `capture-execution-evidence`.
 - **Website or landing page changes**: use `website-agency-orchestrator`.
 - **SEO and GEO**: use `website-seo-content` and `seo-optimize` for website
   work; use future marketing SEO commands for campaign-level SEO.
