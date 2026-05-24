@@ -30,7 +30,7 @@ class ChatbotBackendTests(unittest.TestCase):
         os.environ["EASIIO_CHATBOT_EMAIL_OUTBOX_DIR"] = str(self.email_outbox_path)
         self.crm_connectors_config_path = Path(self.tmp.name) / "crm_connectors.json"
         os.environ["SOLO_CRM_CONNECTORS_CONFIG"] = str(self.crm_connectors_config_path)
-        for key in ("EASIIO_BREVO_API_KEY", "BREVO_API_KEY", "SENDINBLUE_API_KEY", "EASIIO_EMAIL_PROVIDER", "EASIIO_EMAIL_FROM", "HUBSPOT_TEST_TOKEN"):
+        for key in ("EASIIO_BREVO_API_KEY", "BREVO_API_KEY", "SENDINBLUE_API_KEY", "EASIIO_EMAIL_PROVIDER", "EASIIO_EMAIL_FROM", "HUBSPOT_TEST_TOKEN", "HUBSPOT_TEST_PRIVATE_APP_TOKEN", "GOOGLE_SHEETS_TEST_WEBHOOK"):
             os.environ.pop(key, None)
         # Keep tests isolated from the developer's real ~/.hermes/.env values.
         # app.load_env_file uses setdefault(), so these explicit test values
@@ -56,6 +56,8 @@ class ChatbotBackendTests(unittest.TestCase):
         os.environ.pop("EASIIO_EMAIL_FROM", None)
         os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
         os.environ.pop("HUBSPOT_TEST_TOKEN", None)
+        os.environ.pop("HUBSPOT_TEST_PRIVATE_APP_TOKEN", None)
+        os.environ.pop("GOOGLE_SHEETS_TEST_WEBHOOK", None)
 
     def test_health_response_reports_ok(self):
         response = self.app.route_request("GET", "/health", {}, b"", self.crm)
@@ -126,6 +128,50 @@ class ChatbotBackendTests(unittest.TestCase):
         indexed = self.app.SITE_RAG_INDEX["ai-solo-company-class"]
         self.assertEqual(indexed[0]["url"], "https://example.com/ai-solo-company/")
         self.assertEqual(indexed[0]["title"], "AI Solo Company Bootcamp")
+
+    def test_crm_connectors_config_api_saves_sanitized_site_provider_settings(self):
+        os.environ["HUBSPOT_TEST_PRIVATE_APP_TOKEN"] = "test-private-token"
+        os.environ["GOOGLE_SHEETS_TEST_WEBHOOK"] = "https://example.invalid/google-sheets-webhook"
+        payload = {
+            "site_id": "easiio-main",
+            "enabled": True,
+            "providers": {
+                "hubspot": {
+                    "enabled": True,
+                    "mode": "sync_on_lead",
+                    "token_env": "HUBSPOT_TEST_PRIVATE_APP_TOKEN",
+                    "access_token": "must-not-be-saved",
+                    "pipeline_id": "default",
+                    "dealstage": "appointmentscheduled",
+                },
+                "google_sheets": {
+                    "enabled": True,
+                    "mode": "sync_on_lead",
+                    "webhook_url_env": "GOOGLE_SHEETS_TEST_WEBHOOK",
+                    "webhook_url": "must-not-be-saved",
+                    "sheet_name": "Leads",
+                    "spreadsheet_id": "spreadsheet-for-routing",
+                },
+            },
+        }
+        save = self.app.route_request("POST", "/api/crm-connectors/config", {}, json.dumps(payload).encode(), self.crm)
+        self.assertEqual(save.status, 200)
+        self.assertTrue(save.body["site_config"]["enabled"])
+        saved_json = self.crm_connectors_config_path.read_text(encoding="utf-8")
+        self.assertIn("HUBSPOT_TEST_PRIVATE_APP_TOKEN", saved_json)
+        self.assertIn("GOOGLE_SHEETS_TEST_WEBHOOK", saved_json)
+        self.assertNotIn("must-not-be-saved", saved_json)
+        self.assertNotIn("secret-webhook", saved_json)
+        self.assertNotIn("test-private-token", saved_json)
+
+        status = self.app.route_request("GET", "/api/crm-connectors/config?site_id=easiio-main", {}, b"", self.crm)
+        self.assertEqual(status.status, 200)
+        providers = status.body["site_config"]["providers"]
+        self.assertTrue(providers["hubspot"]["configured"])
+        self.assertTrue(providers["google_sheets"]["configured"])
+        self.assertNotIn("access_token", json.dumps(status.body))
+        self.assertNotIn("webhook_url", providers["google_sheets"])
+        self.assertNotIn("secret-webhook", json.dumps(status.body))
 
     def test_message_with_email_and_demo_intent_creates_contact_deal_activity(self):
         payload = {

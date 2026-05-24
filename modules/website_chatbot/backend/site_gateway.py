@@ -518,7 +518,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/health" or path.startswith("/api/chat/") or path.startswith("/api/rag/"):
             self._proxy()
-        elif path.startswith("/api/email-agent/"):
+        elif path.startswith("/api/email-agent/") or path.startswith("/api/crm-connectors/"):
             self._proxy_email_agent()
         elif path.startswith("/api/wiki/"):
             self._proxy_wiki()
@@ -539,7 +539,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path.startswith("/api/chat/") or path.startswith("/api/rag/"):
             self._proxy()
-        elif path.startswith("/api/email-agent/"):
+        elif path.startswith("/api/email-agent/") or path.startswith("/api/crm-connectors/"):
             self._proxy_email_agent()
         elif path.startswith("/api/wiki/"):
             self._proxy_wiki()
@@ -560,7 +560,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/api/"):
             if self.path.startswith("/api/wiki/"):
                 self._proxy(self.wiki_api_base)
-            elif self.path.startswith("/api/email-agent/"):
+            elif self.path.startswith("/api/email-agent/") or self.path.startswith("/api/crm-connectors/"):
                 self._proxy_email_agent()
             else:
                 self._proxy()

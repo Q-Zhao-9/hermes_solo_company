@@ -422,11 +422,41 @@ Phase 2 acceptance criteria:
 
 ---
 
+## Phase 3 Addendum: Admin Connector Configuration
+
+Phase 3 adds a safe admin configuration layer on top of the HubSpot and Google Sheets connectors. Operators can enable providers per `site_id` without manually editing `crm_connectors.json`.
+
+Implemented behavior:
+
+- Chatbot backend API:
+  - `GET /api/crm-connectors/config?site_id=...`
+  - `POST /api/crm-connectors/config`
+- Site gateway protection:
+  - `/api/crm-connectors/*` is routed through the same admin-only proxy path used by email-agent configuration.
+- Admin customizer UI:
+  - Adds a **CRM connectors** card for HubSpot and Google Sheets.
+  - Allows per-site enable/disable.
+  - Shows whether the configured server-side environment variable is present.
+- Secret safety:
+  - The UI accepts only environment variable names such as `HUBSPOT_PRIVATE_APP_TOKEN` and `GOOGLE_SHEETS_LEADS_WEBHOOK_URL`.
+  - Raw `access_token` and `webhook_url` values are ignored by the backend sanitizer and are not collected by the admin UI.
+  - API responses return sanitized provider status only.
+
+Verification added:
+
+```bash
+python3 modules/website_chatbot/tests/test_backend.py
+node modules/website_chatbot/tests/admin_customizer_static.test.js
+```
+
+---
+
 ## Recommended Rollout
 
 1. Build HubSpot connector in source-only repo first.
 2. Add one demo config using fake env var names only.
-3. Add admin UI later for selecting connector provider per site.
+3. Use the Phase 3 admin UI for selecting connector provider per site.
 4. Validate with a real HubSpot test account only after code review.
-5. Add Airtable / Google Sheets connector for small-business and student demos.
-6. Add Zoho / Bitrix24 / Freshsales based on user demand.
+5. Add Airtable connector for small-business and student demos.
+6. Add sync logs/retry queue and external ID persistence.
+7. Add Zoho / Bitrix24 / Freshsales based on user demand.

@@ -70,7 +70,8 @@
       apiBase,
       siteId,
       formConfig: normalizeConfig(existing.formConfig || DEFAULT_FORM_CONFIG),
-      ragItems: existing.ragItems || []
+      ragItems: existing.ragItems || [],
+      crmConnectors: existing.crmConnectors || { enabled: false, providers: {} }
     };
     stateByRoot.set(root, state);
     root.classList.add('easiio-chatbot-customizer');
@@ -123,6 +124,39 @@
           <article class="chatbot-admin-card chatbot-kb-card">
             <div class="chatbot-card-header">
               <div>
+                <h3>CRM connectors</h3>
+                <p class="muted small">Enable server-side outbound sync after local Solo CRM lead capture. Store only environment variable names here — never raw tokens, access_token values, or webhook_url values.</p>
+              </div>
+              <button class="button" type="button" data-reload-crm-connectors>Reload</button>
+            </div>
+            <form data-crm-connectors-editor class="chatbot-editor-form">
+              <label class="chatbot-checkbox"><input name="connectors_enabled" type="checkbox" /> Enable external CRM sync for this site</label>
+              <div class="chatbot-connector-grid">
+                <fieldset class="chatbot-connector-card">
+                  <legend>HubSpot</legend>
+                  <label class="chatbot-checkbox"><input name="hubspot_enabled" type="checkbox" /> Enable HubSpot</label>
+                  <label>HubSpot token_env<input name="hubspot_token_env" type="text" placeholder="HUBSPOT_PRIVATE_APP_TOKEN" /></label>
+                  <label>Pipeline ID<input name="hubspot_pipeline_id" type="text" placeholder="default" /></label>
+                  <label>Deal stage<input name="hubspot_dealstage" type="text" placeholder="appointmentscheduled" /></label>
+                  <p class="muted small" data-hubspot-status></p>
+                </fieldset>
+                <fieldset class="chatbot-connector-card">
+                  <legend>Google Sheets</legend>
+                  <label class="chatbot-checkbox"><input name="google_sheets_enabled" type="checkbox" /> Enable Google Sheets</label>
+                  <label>Google Sheets webhook_url_env<input name="google_sheets_webhook_url_env" type="text" placeholder="GOOGLE_SHEETS_LEADS_WEBHOOK_URL" /></label>
+                  <label>Sheet name<input name="google_sheets_sheet_name" type="text" placeholder="Leads" /></label>
+                  <label>Spreadsheet ID<input name="google_sheets_spreadsheet_id" type="text" placeholder="optional routing id" /></label>
+                  <p class="muted small" data-google-sheets-status></p>
+                </fieldset>
+              </div>
+              <div class="chatbot-actions">
+                <button class="button primary" type="submit">Save CRM connectors</button>
+              </div>
+            </form>
+          </article>
+          <article class="chatbot-admin-card chatbot-kb-card">
+            <div class="chatbot-card-header">
+              <div>
                 <h3>RAG knowledge base</h3>
                 <p class="muted small">Add or modify manual knowledge entries used by the chatbot for this site_id.</p>
               </div>
@@ -147,6 +181,7 @@
     renderFieldRows(root);
     renderPreview(root);
     loadFormConfig(root);
+    loadCrmConnectors(root);
     loadKnowledgeBase(root);
   }
 
@@ -272,6 +307,81 @@
     status(root, `Saved lead form for ${state.siteId}`, 'success');
   }
 
+  function fillCrmConnectors(root) {
+    const state = currentState(root);
+    const form = root.querySelector('[data-crm-connectors-editor]');
+    if (!form) return;
+    const cfg = state.crmConnectors || { enabled: false, providers: {} };
+    const hubspot = (cfg.providers && cfg.providers.hubspot) || {};
+    const sheets = (cfg.providers && cfg.providers.google_sheets) || {};
+    form.elements.connectors_enabled.checked = Boolean(cfg.enabled);
+    form.elements.hubspot_enabled.checked = Boolean(hubspot.enabled);
+    form.elements.hubspot_token_env.value = hubspot.token_env || '';
+    form.elements.hubspot_pipeline_id.value = hubspot.pipeline_id || '';
+    form.elements.hubspot_dealstage.value = hubspot.dealstage || '';
+    form.elements.google_sheets_enabled.checked = Boolean(sheets.enabled);
+    form.elements.google_sheets_webhook_url_env.value = sheets.webhook_url_env || '';
+    form.elements.google_sheets_sheet_name.value = sheets.sheet_name || '';
+    form.elements.google_sheets_spreadsheet_id.value = sheets.spreadsheet_id || '';
+    const hubspotStatus = root.querySelector('[data-hubspot-status]');
+    const sheetsStatus = root.querySelector('[data-google-sheets-status]');
+    if (hubspotStatus) hubspotStatus.textContent = hubspot.enabled ? (hubspot.configured ? 'Configured from server environment.' : 'Enabled but env var is not set on server.') : 'Disabled';
+    if (sheetsStatus) sheetsStatus.textContent = sheets.enabled ? (sheets.configured ? 'Configured from server environment.' : 'Enabled but env var is not set on server.') : 'Disabled';
+  }
+
+  function readCrmConnectors(root) {
+    const form = root.querySelector('[data-crm-connectors-editor]');
+    return {
+      enabled: Boolean(form.elements.connectors_enabled.checked),
+      providers: {
+        hubspot: {
+          enabled: Boolean(form.elements.hubspot_enabled.checked),
+          mode: 'sync_on_lead',
+          token_env: form.elements.hubspot_token_env.value,
+          pipeline_id: form.elements.hubspot_pipeline_id.value,
+          dealstage: form.elements.hubspot_dealstage.value
+        },
+        google_sheets: {
+          enabled: Boolean(form.elements.google_sheets_enabled.checked),
+          mode: 'sync_on_lead',
+          webhook_url_env: form.elements.google_sheets_webhook_url_env.value,
+          sheet_name: form.elements.google_sheets_sheet_name.value,
+          spreadsheet_id: form.elements.google_sheets_spreadsheet_id.value
+        }
+      }
+    };
+  }
+
+  async function loadCrmConnectors(root) {
+    const state = currentState(root);
+    try {
+      const response = await fetch(apiUrl(state.apiBase, `/api/crm-connectors/config?site_id=${encodeURIComponent(readSiteId(root))}`), { credentials: 'same-origin' });
+      const body = await response.json();
+      if (!response.ok || body.ok === false) throw new Error(body.error || 'Failed to load CRM connectors');
+      state.crmConnectors = body.site_config || { enabled: false, providers: {} };
+      fillCrmConnectors(root);
+      status(root, `Loaded CRM connectors for ${state.siteId}`, 'success');
+    } catch (error) {
+      status(root, `CRM connector load failed: ${error.message}`, 'warning');
+    }
+  }
+
+  async function saveCrmConnectors(root) {
+    const state = currentState(root);
+    const siteConfig = readCrmConnectors(root);
+    const response = await fetch(apiUrl(state.apiBase, '/api/crm-connectors/config'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ site_id: readSiteId(root), site_config: siteConfig })
+    });
+    const body = await response.json();
+    if (!response.ok || body.ok === false) throw new Error(body.error || 'Failed to save CRM connectors');
+    state.crmConnectors = body.site_config || siteConfig;
+    fillCrmConnectors(root);
+    status(root, `Saved CRM connectors for ${state.siteId}`, 'success');
+  }
+
   async function loadKnowledgeBase(root) {
     const state = currentState(root);
     try {
@@ -377,6 +487,7 @@
         if (target.matches('[data-remove-field]')) { event.preventDefault(); removeFormField(root, target.dataset.removeField); }
         if (target.matches('[data-reset-defaults]')) { event.preventDefault(); currentState(root).formConfig = normalizeConfig(DEFAULT_FORM_CONFIG); fillForm(root); renderFieldRows(root); renderPreview(root); }
         if (target.matches('[data-reload-form]')) { event.preventDefault(); await loadFormConfig(root); }
+        if (target.matches('[data-reload-crm-connectors]')) { event.preventDefault(); await loadCrmConnectors(root); }
         if (target.matches('[data-reload-kb]')) { event.preventDefault(); await loadKnowledgeBase(root); }
         if (target.matches('[data-clear-kb-form]')) { event.preventDefault(); clearKnowledgeForm(root); }
         if (target.matches('[data-edit-kb]')) { event.preventDefault(); editKnowledgeItem(root, target.dataset.editKb); }
@@ -388,6 +499,10 @@
     root.querySelector('[data-lead-form-editor]').addEventListener('submit', async (event) => {
       event.preventDefault();
       try { await saveFormConfig(root); } catch (error) { status(root, error.message, 'error'); }
+    });
+    root.querySelector('[data-crm-connectors-editor]').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try { await saveCrmConnectors(root); } catch (error) { status(root, error.message, 'error'); }
     });
     root.querySelector('[data-kb-editor]').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -411,6 +526,8 @@
     mount: render,
     loadFormConfig: (root) => loadFormConfig(root),
     saveFormConfig: (root) => saveFormConfig(root),
+    loadCrmConnectors: (root) => loadCrmConnectors(root),
+    saveCrmConnectors: (root) => saveCrmConnectors(root),
     addFormField: (root) => addFormField(root),
     removeFormField: (root, index) => removeFormField(root, index),
     loadKnowledgeBase: (root) => loadKnowledgeBase(root),

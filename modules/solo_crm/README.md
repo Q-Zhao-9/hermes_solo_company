@@ -56,7 +56,7 @@ Restart Hermes or use `/reload-mcp` in CLI after adding the config. Tools will a
 
 Solo CRM can optionally sync locally saved chatbot leads to external CRMs. Local SQLite remains the source of truth; connector failures do not block lead capture.
 
-Phase 1 includes a HubSpot connector. Phase 2 adds a Google Sheets connector for students and very small businesses that want a simple shared lead table.
+Phase 1 includes a HubSpot connector. Phase 2 adds a Google Sheets connector for students and very small businesses that want a simple shared lead table. Phase 3 adds an admin-safe configuration API and reusable chatbot customizer UI controls so operators can enable providers per site without editing JSON by hand.
 
 ```text
 connectors/
@@ -122,6 +122,42 @@ Example Google Sheets config using an environment variable for a private Google 
 ```
 
 The Google Sheets connector posts sanitized contact/company/deal/activity rows to an Apps Script webhook. Keep the webhook URL server-side only; do not expose it in widget JavaScript, WordPress settings, logs, or commits.
+
+Phase 3 admin configuration endpoints are exposed by the chatbot backend and protected by the site gateway admin session when used with the hosted/admin site:
+
+```text
+GET  /api/crm-connectors/config?site_id=ai-solo-company
+POST /api/crm-connectors/config
+```
+
+The admin customizer module (`modules/website_chatbot/admin/chatbot-customizer.js`) now includes a **CRM connectors** card. It saves only safe provider settings such as `token_env`, `webhook_url_env`, `pipeline_id`, `dealstage`, `sheet_name`, and `spreadsheet_id`. It intentionally does not collect raw HubSpot `access_token` values or raw Google Sheets `webhook_url` values.
+
+Example POST body:
+
+```json
+{
+  "site_id": "ai-solo-company",
+  "site_config": {
+    "enabled": true,
+    "providers": {
+      "hubspot": {
+        "enabled": true,
+        "mode": "sync_on_lead",
+        "token_env": "HUBSPOT_PRIVATE_APP_TOKEN",
+        "pipeline_id": "default",
+        "dealstage": "appointmentscheduled"
+      },
+      "google_sheets": {
+        "enabled": true,
+        "mode": "sync_on_lead",
+        "webhook_url_env": "GOOGLE_SHEETS_LEADS_WEBHOOK_URL",
+        "sheet_name": "Leads",
+        "spreadsheet_id": "optional-spreadsheet-id-for-script-routing"
+      }
+    }
+  }
+}
+```
 
 Set secrets only in server-side environment, never in browser JavaScript or Git:
 

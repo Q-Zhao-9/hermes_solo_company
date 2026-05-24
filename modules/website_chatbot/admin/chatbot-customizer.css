@@ -93,6 +93,27 @@
   grid-column: 1 / -1;
 }
 
+.chatbot-connector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.8rem;
+}
+
+.chatbot-connector-card {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0;
+  border: 1px solid var(--chatbot-border);
+  border-radius: 14px;
+  padding: 0.85rem;
+  background: var(--chatbot-soft);
+}
+
+.chatbot-connector-card legend {
+  padding: 0 0.35rem;
+  font-weight: 800;
+}
+
 .chatbot-editor-form,
 .chatbot-preview-form form {
   display: grid;

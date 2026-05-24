@@ -35,10 +35,20 @@ if str(SOLO_CRM_ROOT) not in sys.path:
 from crm_core import SoloCRM  # noqa: E402
 try:  # noqa: E402
     from connectors.sync import sync_contact_to_enabled_crms  # type: ignore
+    from connectors.config import load_connectors_config, sanitize_connectors_config, connectors_config_path  # type: ignore
 except Exception:  # pragma: no cover - optional connector package may be absent in older installs
     def sync_contact_to_enabled_crms(crm: SoloCRM, site_id: str, contact_id: int, *, deal_id: int | None = None,
                                      activity_id: int | None = None) -> dict[str, Any]:
         return {"enabled": False, "ok": True, "providers": []}
+
+    def load_connectors_config(path: str | Path | None = None) -> dict[str, Any]:
+        return {"sites": {}}
+
+    def sanitize_connectors_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"sites": {}}
+
+    def connectors_config_path() -> Path:
+        return Path(os.environ.get("SOLO_CRM_CONNECTORS_CONFIG", str(ROOT / "data" / "crm_connectors.json"))).expanduser()
 
 
 def load_env_file(path: Path) -> None:
@@ -480,6 +490,66 @@ def email_agent_config_upsert_handler(payload: dict[str, Any]) -> Response:
     store[site_id] = config
     save_email_config_store(store)
     return json_response(200, {"ok": True, "site_id": site_id, "email_config": config})
+
+
+ALLOWED_CRM_CONNECTOR_PROVIDERS = {"hubspot", "google_sheets"}
+ALLOWED_CRM_CONNECTOR_FIELDS = {
+    "hubspot": {"enabled", "mode", "token_env", "pipeline_id", "dealstage"},
+    "google_sheets": {"enabled", "mode", "webhook_url_env", "sheet_name", "spreadsheet_id"},
+}
+
+
+def sanitize_crm_connector_site_config(config: dict[str, Any]) -> dict[str, Any]:
+    providers: dict[str, Any] = {}
+    raw_providers = config.get("providers") if isinstance(config.get("providers"), dict) else {}
+    for provider, raw_provider_cfg in raw_providers.items():
+        provider_name = sanitize_text(provider, 40).lower()
+        if provider_name not in ALLOWED_CRM_CONNECTOR_PROVIDERS or not isinstance(raw_provider_cfg, dict):
+            continue
+        allowed = ALLOWED_CRM_CONNECTOR_FIELDS[provider_name]
+        provider_cfg: dict[str, Any] = {"enabled": bool(raw_provider_cfg.get("enabled"))}
+        for key in allowed:
+            if key == "enabled" or key not in raw_provider_cfg:
+                continue
+            if key.endswith("_env"):
+                value = sanitize_text(raw_provider_cfg.get(key), 120)
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,119}", value or ""):
+                    provider_cfg[key] = value
+                continue
+            limit = 120 if key in {"pipeline_id", "dealstage", "sheet_name", "mode"} else 240
+            provider_cfg[key] = sanitize_text(raw_provider_cfg.get(key), limit)
+        provider_cfg.setdefault("mode", "sync_on_lead")
+        providers[provider_name] = provider_cfg
+    return {"enabled": bool(config.get("enabled")), "providers": providers}
+
+
+def save_connectors_config(config: dict[str, Any]) -> None:
+    path = connectors_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def crm_connectors_config_handler(payload: dict[str, Any]) -> Response:
+    site_id = sanitize_text(payload.get("site_id") or "default", 100)
+    raw_config = load_connectors_config()
+    sanitized = sanitize_connectors_config(raw_config)
+    site_config = (sanitized.get("sites") or {}).get(site_id) or {"enabled": False, "providers": {}}
+    return json_response(200, {"ok": True, "site_id": site_id, "site_config": site_config, "config": sanitized})
+
+
+def crm_connectors_config_upsert_handler(payload: dict[str, Any]) -> Response:
+    site_id = sanitize_text(payload.get("site_id") or "default", 100)
+    raw_site_config = payload.get("site_config") or payload.get("siteConfig") or payload
+    if not isinstance(raw_site_config, dict):
+        return json_response(400, {"ok": False, "error": "site_config must be an object"})
+    site_config = sanitize_crm_connector_site_config(raw_site_config)
+    config = load_connectors_config()
+    sites = config.get("sites") if isinstance(config.get("sites"), dict) else {}
+    config["sites"] = sites
+    sites[site_id] = site_config
+    save_connectors_config(config)
+    public_site_config = (sanitize_connectors_config(config).get("sites") or {}).get(site_id) or {"enabled": False, "providers": {}}
+    return json_response(200, {"ok": True, "site_id": site_id, "site_config": public_site_config})
 
 
 def render_email_template(template: str, values: dict[str, Any]) -> str:
@@ -1262,6 +1332,8 @@ def route_request(method: str, path: str, headers: dict[str, str], body: bytes, 
         return form_config_handler({key: values[-1] if values else "" for key, values in parse_qs(parsed.query).items()})
     if method == "GET" and route == "/api/email-agent/config":
         return email_agent_config_handler({key: values[-1] if values else "" for key, values in parse_qs(parsed.query).items()})
+    if method == "GET" and route == "/api/crm-connectors/config":
+        return crm_connectors_config_handler({key: values[-1] if values else "" for key, values in parse_qs(parsed.query).items()})
     if method != "POST":
         return json_response(405, {"ok": False, "error": "method not allowed"})
     try:
@@ -1278,6 +1350,8 @@ def route_request(method: str, path: str, headers: dict[str, str], body: bytes, 
         return form_config_upsert_handler(payload)
     if route == "/api/email-agent/config":
         return email_agent_config_upsert_handler(payload)
+    if route == "/api/crm-connectors/config":
+        return crm_connectors_config_upsert_handler(payload)
     if route == "/api/rag/content":
         return rag_content_upsert_handler(payload)
     if route == "/api/rag/content/delete":

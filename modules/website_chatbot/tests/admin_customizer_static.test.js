@@ -21,6 +21,15 @@ const css = fs.readFileSync(cssPath, 'utf8');
   '/api/chat/form-config',
   '/api/rag/content',
   '/api/rag/content/delete',
+  '/api/crm-connectors/config',
+  'loadCrmConnectors',
+  'saveCrmConnectors',
+  'HubSpot',
+  'Google Sheets',
+  'token_env',
+  'webhook_url_env',
+  'access_token',
+  'webhook_url',
   'loadFormConfig',
   'saveFormConfig',
   'addFormField',
@@ -37,6 +46,9 @@ const css = fs.readFileSync(cssPath, 'utf8');
 assert.ok(/fields\s*:\s*\[[\s\S]*name:\s*['"]name['"][\s\S]*name:\s*['"]email['"][\s\S]*name:\s*['"]company['"][\s\S]*name:\s*['"]message['"]/.test(js), 'default fields should include name/email/company/message');
 assert.ok(!/name:\s*['"]phone['"]/.test(js), 'phone should not be a default lead form field');
 assert.ok(/credentials\s*:\s*['"]same-origin['"]/.test(js), 'admin module should use same-origin credentials by default');
+assert.ok(/path\.startswith\(\"\/api\/email-agent\/\"\) or path\.startswith\(\"\/api\/crm-connectors\/\"\)[\s\S]*_proxy_email_agent\(\)/.test(fs.readFileSync(path.join(root, 'backend', 'site_gateway.py'), 'utf8')), 'CRM connector admin API must be admin-protected in site gateway');
+assert.ok(!/name:\s*['"]access_token['"]/.test(js), 'admin UI must not collect raw HubSpot access tokens');
+assert.ok(!/name:\s*['"]webhook_url['"]/.test(js), 'admin UI must not collect raw Google Sheets webhook URLs');
 
 [
   '.easiio-chatbot-customizer',
