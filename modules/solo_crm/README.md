@@ -52,8 +52,65 @@ mcp_servers:
 
 Restart Hermes or use `/reload-mcp` in CLI after adding the config. Tools will appear as `mcp_solo_crm_crm_create_contact`, `mcp_solo_crm_crm_search_contacts`, etc.
 
+## Optional external CRM connectors
+
+Solo CRM can optionally sync locally saved chatbot leads to external CRMs. Local SQLite remains the source of truth; connector failures do not block lead capture.
+
+Phase 1 includes a HubSpot connector under:
+
+```text
+connectors/
+  base.py
+  config.py
+  hubspot.py
+  sync.py
+```
+
+Protected connector config defaults to:
+
+```text
+~/.hermes/tools/solo_crm/data/crm_connectors.json
+```
+
+Override with:
+
+```bash
+SOLO_CRM_CONNECTORS_CONFIG=/path/to/crm_connectors.json
+```
+
+Example HubSpot config using an environment variable for the private app token:
+
+```json
+{
+  "sites": {
+    "ai-solo-company": {
+      "enabled": true,
+      "providers": {
+        "hubspot": {
+          "enabled": true,
+          "mode": "sync_on_lead",
+          "token_env": "HUBSPOT_PRIVATE_APP_TOKEN",
+          "pipeline_id": "default",
+          "dealstage": "appointmentscheduled"
+        }
+      }
+    }
+  }
+}
+```
+
+Set the token only in server-side environment, never in browser JavaScript or Git:
+
+```bash
+HUBSPOT_PRIVATE_APP_TOKEN=...
+```
+
 ## Test
 
 ```bash
 python3 ~/.hermes/tools/solo_crm/tests/test_crm_core.py
+python3 ~/.hermes/tools/solo_crm/tests/test_crm_connectors_base.py
+python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_config.py
+python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_hubspot.py
+python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_sync.py
 ```

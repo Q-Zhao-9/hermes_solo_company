@@ -28,7 +28,9 @@ class ChatbotBackendTests(unittest.TestCase):
         os.environ["EASIIO_CHATBOT_FORM_CONFIG_STORE"] = str(self.form_config_store_path)
         os.environ["EASIIO_CHATBOT_EMAIL_CONFIG_STORE"] = str(self.email_config_store_path)
         os.environ["EASIIO_CHATBOT_EMAIL_OUTBOX_DIR"] = str(self.email_outbox_path)
-        for key in ("EASIIO_BREVO_API_KEY", "BREVO_API_KEY", "SENDINBLUE_API_KEY", "EASIIO_EMAIL_PROVIDER", "EASIIO_EMAIL_FROM"):
+        self.crm_connectors_config_path = Path(self.tmp.name) / "crm_connectors.json"
+        os.environ["SOLO_CRM_CONNECTORS_CONFIG"] = str(self.crm_connectors_config_path)
+        for key in ("EASIIO_BREVO_API_KEY", "BREVO_API_KEY", "SENDINBLUE_API_KEY", "EASIIO_EMAIL_PROVIDER", "EASIIO_EMAIL_FROM", "HUBSPOT_TEST_TOKEN"):
             os.environ.pop(key, None)
         # Keep tests isolated from the developer's real ~/.hermes/.env values.
         # app.load_env_file uses setdefault(), so these explicit test values
@@ -52,6 +54,8 @@ class ChatbotBackendTests(unittest.TestCase):
         os.environ.pop("BREVO_API_KEY", None)
         os.environ.pop("EASIIO_EMAIL_PROVIDER", None)
         os.environ.pop("EASIIO_EMAIL_FROM", None)
+        os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
+        os.environ.pop("HUBSPOT_TEST_TOKEN", None)
 
     def test_health_response_reports_ok(self):
         response = self.app.route_request("GET", "/health", {}, b"", self.crm)
@@ -148,6 +152,46 @@ class ChatbotBackendTests(unittest.TestCase):
         activities = self.crm.list_activities(contact_id=contacts[0]["id"])
         self.assertEqual(len(activities), 1)
         self.assertIn("I want a demo", activities[0]["body"])
+
+    def test_message_with_email_runs_optional_external_crm_sync_without_blocking_lead_capture(self):
+        payload = {
+            "site_id": "easiio-main",
+            "session_id": "chat_sync",
+            "message": "I want a demo for AI agents. My email is sync@example.com",
+            "visitor": {"name": "Jian", "company": "Easiio"},
+            "page_context": {"url": "https://www.easiio.com/pricing/", "title": "Pricing"},
+        }
+        sync_result = {"enabled": True, "ok": True, "providers": [{"provider": "hubspot", "ok": True, "external_contact_id": "123"}]}
+        with patch.object(self.app, "sync_contact_to_enabled_crms", return_value=sync_result) as sync:
+            response = self.app.route_request("POST", "/api/chat/message", {}, json.dumps(payload).encode(), self.crm)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(response.body["lead_captured"])
+        self.assertEqual(response.body["crm_sync"], sync_result)
+        sync.assert_called_once()
+        args = sync.call_args.args
+        self.assertIs(args[0], self.crm)
+        self.assertEqual(args[1], "easiio-main")
+        self.assertEqual(args[2], response.body["crm_contact_id"])
+        self.assertEqual(sync.call_args.kwargs["deal_id"], response.body["crm_deal_id"])
+        self.assertEqual(sync.call_args.kwargs["activity_id"], response.body["crm_activity_id"])
+
+    def test_lead_form_runs_optional_external_crm_sync_and_keeps_local_success_on_sync_failure(self):
+        payload = {
+            "site_id": "easiio-main",
+            "session_id": "lead_sync",
+            "name": "Ada Lovelace",
+            "email": "ada-sync@example.com",
+            "company": "Analytical Engines",
+            "message": "Please contact me about CRM connectors.",
+        }
+        sync_result = {"enabled": True, "ok": False, "providers": [{"provider": "hubspot", "ok": False, "error": "provider_error"}]}
+        with patch.object(self.app, "sync_contact_to_enabled_crms", return_value=sync_result):
+            response = self.app.route_request("POST", "/api/chat/lead", {}, json.dumps(payload).encode(), self.crm)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(response.body["lead_captured"])
+        self.assertIn("crm_contact_id", response.body)
+        self.assertEqual(response.body["crm_sync"], sync_result)
+        self.assertEqual(self.crm.search_contacts("ada-sync@example.com")[0]["email"], "ada-sync@example.com")
 
     def test_message_answers_from_website_page_content_rag_without_lead_form(self):
         payload = {

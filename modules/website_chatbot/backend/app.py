@@ -33,6 +33,12 @@ if str(SOLO_CRM_ROOT) not in sys.path:
     sys.path.insert(0, str(SOLO_CRM_ROOT))
 
 from crm_core import SoloCRM  # noqa: E402
+try:  # noqa: E402
+    from connectors.sync import sync_contact_to_enabled_crms  # type: ignore
+except Exception:  # pragma: no cover - optional connector package may be absent in older installs
+    def sync_contact_to_enabled_crms(crm: SoloCRM, site_id: str, contact_id: int, *, deal_id: int | None = None,
+                                     activity_id: int | None = None) -> dict[str, Any]:
+        return {"enabled": False, "ok": True, "providers": []}
 
 
 def load_env_file(path: Path) -> None:
@@ -1075,6 +1081,7 @@ def message_handler(payload: dict[str, Any], crm: SoloCRM) -> Response:
     deal = None
     activity = None
     email_agent_result: dict[str, Any] | None = None
+    crm_sync_result: dict[str, Any] | None = None
 
     if email or phone:
         notes = f"Website chatbot lead\nSite: {site_id}\nSession: {session_id}\nPage: {page_context.get('url', '')}\nLead score: {score}"
@@ -1102,6 +1109,14 @@ def message_handler(payload: dict[str, Any], crm: SoloCRM) -> Response:
                 "lead_score": score,
             },
         )
+        if contact:
+            crm_sync_result = sync_contact_to_enabled_crms(
+                crm,
+                site_id,
+                int(contact["id"]),
+                deal_id=int(deal["id"]) if deal else None,
+                activity_id=int(activity["id"]) if activity else None,
+            )
 
     rag_answer = answer_from_site_rag(site_id, message, sanitize_text(page_context.get("language") or "", 20))
     if contact:
@@ -1135,6 +1150,8 @@ def message_handler(payload: dict[str, Any], crm: SoloCRM) -> Response:
         body["crm_activity_id"] = activity["id"]
     if email_agent_result:
         body["email_agent"] = email_agent_result
+    if crm_sync_result and crm_sync_result.get("enabled"):
+        body["crm_sync"] = crm_sync_result
     return json_response(200, body)
 
 
@@ -1206,6 +1223,15 @@ def lead_handler(payload: dict[str, Any], crm: SoloCRM) -> Response:
             "lead_score": score,
         },
     )
+    crm_sync_result = None
+    if contact:
+        crm_sync_result = sync_contact_to_enabled_crms(
+            crm,
+            site_id,
+            int(contact["id"]),
+            deal_id=int(deal["id"]) if deal else None,
+            activity_id=int(activity["id"]) if activity else None,
+        )
     body: dict[str, Any] = {
         "reply": "Thanks — I saved your contact details. Easiio can follow up soon.",
         "lead_captured": True,
@@ -1216,6 +1242,8 @@ def lead_handler(payload: dict[str, Any], crm: SoloCRM) -> Response:
         "lead_score": score,
         "email_agent": email_agent_result,
     }
+    if crm_sync_result and crm_sync_result.get("enabled"):
+        body["crm_sync"] = crm_sync_result
     return json_response(200, body)
 
 
