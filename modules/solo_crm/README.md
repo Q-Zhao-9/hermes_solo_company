@@ -56,12 +56,13 @@ Restart Hermes or use `/reload-mcp` in CLI after adding the config. Tools will a
 
 Solo CRM can optionally sync locally saved chatbot leads to external CRMs. Local SQLite remains the source of truth; connector failures do not block lead capture.
 
-Phase 1 includes a HubSpot connector under:
+Phase 1 includes a HubSpot connector. Phase 2 adds a Google Sheets connector for students and very small businesses that want a simple shared lead table.
 
 ```text
 connectors/
   base.py
   config.py
+  google_sheets.py
   hubspot.py
   sync.py
 ```
@@ -99,10 +100,34 @@ Example HubSpot config using an environment variable for the private app token:
 }
 ```
 
-Set the token only in server-side environment, never in browser JavaScript or Git:
+Example Google Sheets config using an environment variable for a private Google Apps Script Web App URL:
+
+```json
+{
+  "sites": {
+    "ai-solo-company": {
+      "enabled": true,
+      "providers": {
+        "google_sheets": {
+          "enabled": true,
+          "mode": "sync_on_lead",
+          "webhook_url_env": "GOOGLE_SHEETS_LEADS_WEBHOOK_URL",
+          "sheet_name": "Leads",
+          "spreadsheet_id": "optional-spreadsheet-id-for-script-routing"
+        }
+      }
+    }
+  }
+}
+```
+
+The Google Sheets connector posts sanitized contact/company/deal/activity rows to an Apps Script webhook. Keep the webhook URL server-side only; do not expose it in widget JavaScript, WordPress settings, logs, or commits.
+
+Set secrets only in server-side environment, never in browser JavaScript or Git:
 
 ```bash
-HUBSPOT_PRIVATE_APP_TOKEN=...
+HUBSPOT_PRIVATE_APP_TOKEN=***
+GOOGLE_SHEETS_LEADS_WEBHOOK_URL=***
 ```
 
 ## Test
@@ -111,6 +136,7 @@ HUBSPOT_PRIVATE_APP_TOKEN=...
 python3 ~/.hermes/tools/solo_crm/tests/test_crm_core.py
 python3 ~/.hermes/tools/solo_crm/tests/test_crm_connectors_base.py
 python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_config.py
+python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_google_sheets.py
 python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_hubspot.py
 python3 ~/.hermes/tools/solo_crm/tests/test_crm_connector_sync.py
 ```

@@ -56,6 +56,32 @@ class CRMConnectorConfigTests(unittest.TestCase):
                 os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
                 os.environ.pop("HUBSPOT_TEST_PRIVATE_APP_TOKEN", None)
 
+    def test_google_sheets_webhook_env_is_resolved_and_sanitized(self):
+        from connectors.config import provider_config_for_site, sanitize_connectors_config
+
+        os.environ["GOOGLE_SHEETS_TEST_WEBHOOK"] = "https://script.google.com/macros/s/secret-webhook/exec"
+        try:
+            config = {"sites": {"demo": {"enabled": True, "providers": {"google_sheets": {
+                "enabled": True,
+                "webhook_url_env": "GOOGLE_SHEETS_TEST_WEBHOOK",
+                "webhook_url": "must-not-return",
+                "sheet_name": "Leads"
+            }}}}}
+            provider = provider_config_for_site(config, "demo", "google_sheets")
+            self.assertTrue(provider["enabled"])
+            self.assertEqual(provider["webhook_url"], "https://script.google.com/macros/s/secret-webhook/exec")
+            self.assertEqual(provider["sheet_name"], "Leads")
+            self.assertNotIn("must-not-return", json.dumps(provider))
+
+            sanitized = sanitize_connectors_config(config)
+            public = sanitized["sites"]["demo"]["providers"]["google_sheets"]
+            self.assertTrue(public["configured"])
+            self.assertEqual(public["webhook_url_env"], "GOOGLE_SHEETS_TEST_WEBHOOK")
+            self.assertNotIn("webhook_url", public)
+            self.assertNotIn("secret-webhook", json.dumps(sanitized))
+        finally:
+            os.environ.pop("GOOGLE_SHEETS_TEST_WEBHOOK", None)
+
     def test_missing_or_disabled_config_returns_empty_provider(self):
         from connectors.config import provider_config_for_site
 

@@ -52,6 +52,39 @@ class CRMConnectorSyncTests(unittest.TestCase):
                 os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
                 os.environ.pop("HUBSPOT_TEST_TOKEN", None)
 
+    def test_sync_contact_to_google_sheets_when_enabled(self):
+        from crm_core import SoloCRM
+        from connectors.sync import sync_contact_to_enabled_crms
+
+        with tempfile.TemporaryDirectory() as td:
+            crm = SoloCRM(Path(td) / "crm.db")
+            website = crm.create_website(site_id="ai-solo-company", name="AI Solo Company")
+            contact = crm.create_contact("Ada", email="ada@example.com", website_id=website["id"])
+            config_path = Path(td) / "connectors.json"
+            config_path.write_text(json.dumps({
+                "sites": {
+                    "ai-solo-company": {
+                        "enabled": True,
+                        "providers": {"google_sheets": {"enabled": True, "webhook_url_env": "GOOGLE_SHEETS_TEST_WEBHOOK", "sheet_name": "Leads"}}
+                    }
+                }
+            }), encoding="utf-8")
+            os.environ["SOLO_CRM_CONNECTORS_CONFIG"] = str(config_path)
+            os.environ["GOOGLE_SHEETS_TEST_WEBHOOK"] = "https://script.google.com/macros/s/secret-webhook/exec"
+            try:
+                with patch("connectors.sync.GoogleSheetsConnector") as sheets_cls:
+                    instance = sheets_cls.return_value
+                    instance.upsert_contact.return_value = {"provider": "google_sheets", "ok": True, "external_contact_id": "row-1"}
+                    result = sync_contact_to_enabled_crms(crm, "ai-solo-company", contact["id"])
+                self.assertTrue(result["enabled"])
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["providers"][0]["provider"], "google_sheets")
+                self.assertEqual(result["providers"][0]["external_contact_id"], "row-1")
+                self.assertNotIn("secret-webhook", json.dumps(result))
+            finally:
+                os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
+                os.environ.pop("GOOGLE_SHEETS_TEST_WEBHOOK", None)
+
     def test_sync_disabled_site_returns_safe_skipped_status(self):
         from crm_core import SoloCRM
         from connectors.sync import sync_contact_to_enabled_crms

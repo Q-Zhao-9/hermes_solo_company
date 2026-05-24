@@ -5,6 +5,7 @@ from typing import Any
 
 from .config import load_connectors_config, provider_config_for_site
 from .hubspot import HubSpotConnector
+from .google_sheets import GoogleSheetsConnector
 
 
 def _safe_error(exc: Exception) -> str:
@@ -58,6 +59,26 @@ def _sync_hubspot(config: dict[str, Any], contact: dict[str, Any], company: dict
     return result
 
 
+def _sync_google_sheets(config: dict[str, Any], contact: dict[str, Any], company: dict[str, Any] | None,
+                        website: dict[str, Any] | None, visitor: dict[str, Any] | None,
+                        deal: dict[str, Any] | None, activity: dict[str, Any] | None) -> dict[str, Any]:
+    connector = GoogleSheetsConnector(config)
+    result = connector.upsert_contact(contact, company=company, website=website, visitor=visitor)
+    if company:
+        company_result = connector.upsert_company(company)
+        if company_result.get("external_company_id"):
+            result["external_company_id"] = company_result["external_company_id"]
+    if deal:
+        deal_result = connector.upsert_deal(deal, contact=contact, company=company)
+        if deal_result.get("external_deal_id"):
+            result["external_deal_id"] = deal_result["external_deal_id"]
+    if activity:
+        activity_result = connector.add_activity(activity, contact=contact, deal=deal)
+        if activity_result.get("external_activity_id"):
+            result["external_activity_id"] = activity_result["external_activity_id"]
+    return result
+
+
 def sync_contact_to_enabled_crms(crm: Any, site_id: str, contact_id: int, *, deal_id: int | None = None,
                                  activity_id: int | None = None) -> dict[str, Any]:
     """Sync one local CRM contact/deal/activity to enabled external CRM providers.
@@ -82,5 +103,12 @@ def sync_contact_to_enabled_crms(crm: Any, site_id: str, contact_id: int, *, dea
             providers.append(_sync_hubspot(hubspot_config, contact, company, website, visitor, deal, activity))
         except Exception as exc:  # external sync must not break local lead capture
             providers.append({"provider": "hubspot", "ok": False, "error": _safe_error(exc)})
+
+    google_sheets_config = provider_config_for_site(config, site_id, "google_sheets")
+    if google_sheets_config:
+        try:
+            providers.append(_sync_google_sheets(google_sheets_config, contact, company, website, visitor, deal, activity))
+        except Exception as exc:  # external sync must not break local lead capture
+            providers.append({"provider": "google_sheets", "ok": False, "error": _safe_error(exc)})
 
     return {"enabled": bool(providers), "ok": bool(providers) and all(item.get("ok") for item in providers), "providers": providers}

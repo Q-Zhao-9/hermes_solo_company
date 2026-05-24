@@ -374,6 +374,54 @@ python3 modules/website_chatbot/tests/test_backend.py
 
 ---
 
+## Phase 2 Addendum: Google Sheets Connector
+
+Phase 2 implemented Google Sheets as the first lightweight/free-friendly connector. It uses a server-side Google Apps Script Web App URL stored in an environment variable, then appends sanitized Solo CRM contact/company/deal/activity rows to a sheet. This avoids browser-side credentials and avoids adding Python OAuth dependencies for small-business/student demos.
+
+Additional files:
+
+```text
+modules/solo_crm/connectors/google_sheets.py
+modules/solo_crm/tests/test_crm_connector_google_sheets.py
+```
+
+Additional safe config example:
+
+```json
+{
+  "sites": {
+    "ai-solo-company": {
+      "enabled": true,
+      "providers": {
+        "google_sheets": {
+          "enabled": true,
+          "mode": "sync_on_lead",
+          "webhook_url_env": "GOOGLE_SHEETS_LEADS_WEBHOOK_URL",
+          "sheet_name": "Leads",
+          "spreadsheet_id": "optional-spreadsheet-id-for-script-routing"
+        }
+      }
+    }
+  }
+}
+```
+
+Server-side environment only:
+
+```bash
+GOOGLE_SHEETS_LEADS_WEBHOOK_URL=***
+```
+
+Phase 2 acceptance criteria:
+
+1. Google Sheets connector appends contact/company/deal/activity rows through a mocked HTTP client.
+2. `webhook_url_env` resolves to `webhook_url` for runtime use, but sanitized config never returns the raw webhook URL.
+3. `sync_contact_to_enabled_crms(...)` can call both HubSpot and Google Sheets providers when enabled.
+4. Google Sheets failures are non-blocking and return sanitized provider status.
+5. Connector tests, chatbot backend tests, static widget/plugin tests, dry-run installer, whitespace check, runtime artifact scan, and secret scan pass.
+
+---
+
 ## Recommended Rollout
 
 1. Build HubSpot connector in source-only repo first.

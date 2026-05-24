@@ -11,6 +11,7 @@ DEFAULT_CONNECTORS_CONFIG = Path(os.environ.get(
     Path.home() / ".hermes" / "tools" / "solo_crm" / "data" / "crm_connectors.json",
 ))
 SENSITIVE_KEYS = {"access_token", "token", "api_key", "client_secret", "refresh_token", "webhook_url", "service_account_json"}
+ENV_SECRET_KEYS = {"token_env": "access_token", "webhook_url_env": "webhook_url", "api_key_env": "api_key"}
 
 
 def connectors_config_path() -> Path:
@@ -46,9 +47,9 @@ def _public_provider_config(raw: dict[str, Any]) -> dict[str, Any]:
     for key, value in raw.items():
         if key in SENSITIVE_KEYS:
             continue
-        if key == "token_env":
+        if key in ENV_SECRET_KEYS:
             env_name = str(value or "").strip()
-            result["token_env"] = env_name
+            result[key] = env_name
             result["configured"] = bool(env_name and os.environ.get(env_name))
             continue
         if isinstance(value, (str, int, float, bool)) or value is None:
@@ -81,13 +82,17 @@ def provider_config_for_site(config: dict[str, Any] | None, site_id: str, provid
     if not isinstance(provider_cfg, dict) or not _bool(provider_cfg.get("enabled")):
         return {}
     resolved = {key: value for key, value in provider_cfg.items() if key not in SENSITIVE_KEYS}
-    token_env = str(provider_cfg.get("token_env") or "").strip()
-    if token_env:
-        token = os.environ.get(token_env, "")
-        if token:
-            resolved["access_token"] = token
-    elif isinstance(provider_cfg.get("access_token"), str):
+    for env_key, secret_key in ENV_SECRET_KEYS.items():
+        env_name = str(provider_cfg.get(env_key) or "").strip()
+        if env_name:
+            secret_value = os.environ.get(env_name, "")
+            if secret_value:
+                resolved[secret_key] = secret_value
+    if isinstance(provider_cfg.get("access_token"), str) and "access_token" not in resolved:
         # Supported for temporary local testing only; sanitize_connectors_config never returns it.
         resolved["access_token"] = str(provider_cfg.get("access_token") or "")
+    if isinstance(provider_cfg.get("webhook_url"), str) and "webhook_url" not in resolved:
+        # Supported for temporary local testing only; sanitize_connectors_config never returns it.
+        resolved["webhook_url"] = str(provider_cfg.get("webhook_url") or "")
     resolved["enabled"] = True
     return resolved
