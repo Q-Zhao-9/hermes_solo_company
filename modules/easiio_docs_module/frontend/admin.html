@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Easiio Docs Admin</title>
+  <meta name="description" content="Admin editor and export console for Easiio Docs Module." />
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <main class="easiio-docs-admin" data-easiio-docs-admin>
+    <section class="easiio-docs-admin-hero">
+      <p class="eyebrow">Easiio Docs Module</p>
+      <h1>Easiio Docs Admin</h1>
+      <p>Create and edit documentation pages, manage publishing metadata, inspect revisions, preview exports, and create approved ZIP packages.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" aria-label="Global admin controls">
+      <label>
+        <span>site_id</span>
+        <input id="docs-admin-site-id" name="site_id" placeholder="ai-solo-company" autocomplete="off" />
+      </label>
+      <label>
+        <span>API base</span>
+        <input id="docs-admin-api-base" name="api_base" value="." />
+      </label>
+      <label>
+        <span>Owner token</span>
+        <input id="docs-admin-owner-token" name="owner_token" type="password" placeholder="Bearer token for protected admin actions" autocomplete="off" />
+      </label>
+      <label>
+        <span>Locale filter</span>
+        <input id="docs-admin-locale-filter" name="locale_filter" placeholder="en, es, zh-cn" autocomplete="off" />
+      </label>
+      <label>
+        <span>Fallback locale</span>
+        <input id="docs-admin-fallback-locale" name="fallback_locale" value="en" autocomplete="off" />
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-load-docs" type="button">Load docs</button>
+        <button id="docs-admin-new-doc" type="button">New doc</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Phase 9 editor actions are protected by Phase 8 owner auth. Private/internal/draft docs should stay behind protected admin access.</p>
+    </section>
+
+    <section class="easiio-docs-admin-status" id="docs-admin-status" aria-live="polite">Enter a site_id and owner token, then load docs or create a new page.</section>
+
+    <section class="easiio-docs-admin-workspace" aria-label="Docs editor workspace">
+      <aside class="easiio-docs-admin-doc-list" aria-label="Documentation pages">
+        <div class="easiio-docs-admin-section-heading">
+          <h2>Docs editor</h2>
+          <p>Load existing docs, edit metadata, and save a new revision.</p>
+        </div>
+        <div id="docs-admin-doc-list" class="easiio-docs-admin-list-empty">No docs loaded.</div>
+      </aside>
+
+      <section class="easiio-docs-admin-editor" aria-label="Document editor">
+        <form id="docs-admin-editor-form">
+          <div class="easiio-docs-admin-form-grid">
+            <label><span>Slug</span><input id="docs-admin-slug" name="slug" placeholder="getting-started" required /></label>
+            <label><span>Title</span><input id="docs-admin-title" name="title" placeholder="Getting Started" required /></label>
+            <label><span>Status</span><select id="docs-admin-status-field" name="status"><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select></label>
+            <label><span>Visibility</span><select id="docs-admin-visibility" name="visibility"><option value="public">Public</option><option value="private">Private</option><option value="login_required">Login required</option><option value="internal">Internal</option></select></label>
+            <label><span>Category</span><input id="docs-admin-category" name="category" placeholder="Guide" /></label>
+            <label><span>Tags</span><input id="docs-admin-tags" name="tags" placeholder="docs, onboarding" /></label>
+            <label><span>Version label</span><input id="docs-admin-version-label" name="version_label" placeholder="1.0" /></label>
+            <label><span>Locale</span><input id="docs-admin-locale" name="locale" value="en" /></label>
+            <label><span>Format</span><select id="docs-admin-content-format" name="content_format"><option value="markdown">Markdown</option><option value="mdx">MDX</option><option value="html">HTML</option><option value="text">Text</option></select></label>
+            <label><span>Changed by</span><input id="docs-admin-changed-by" name="changed_by" value="easiio-docs-admin-ui" /></label>
+          </div>
+          <label class="easiio-docs-admin-wide"><span>Summary</span><textarea id="docs-admin-summary-field" name="summary" rows="3" placeholder="Short summary for cards and exports."></textarea></label>
+          <label class="easiio-docs-admin-wide"><span>Content</span><textarea id="docs-admin-content" name="content" rows="16" placeholder="# Getting Started\nWrite Markdown, MDX, HTML, or text here."></textarea></label>
+
+          <fieldset id="docs-admin-framework-targets" class="easiio-docs-admin-fieldset">
+            <legend>Framework targets</legend>
+            <label><input type="checkbox" value="nextjs-mdx" /> Next.js MDX</label>
+            <label><input type="checkbox" value="wordpress-shortcode" /> WordPress shortcode</label>
+            <label><input type="checkbox" value="sitelet" /> Sitelet</label>
+            <label><input type="checkbox" value="docusaurus" /> Docusaurus</label>
+            <label><input type="checkbox" value="mkdocs" /> MkDocs</label>
+            <label><input type="checkbox" value="hugo" /> Hugo</label>
+            <label><input type="checkbox" value="vitepress" /> VitePress</label>
+            <label><input type="checkbox" value="static-html" /> Static HTML</label>
+            <label><input type="checkbox" value="rag" /> Chatbot RAG</label>
+          </fieldset>
+
+          <label class="easiio-docs-admin-checkbox"><input id="docs-admin-rag-enabled" type="checkbox" /> Enable chatbot RAG sync for this doc</label>
+
+          <div class="easiio-docs-admin-actions">
+            <button id="docs-admin-save-doc" type="button">Save doc</button>
+            <button id="docs-admin-delete-doc" type="button">Delete doc</button>
+            <button id="docs-admin-revisions" type="button">Load revisions</button>
+          </div>
+        </form>
+        <section class="easiio-docs-admin-revisions" id="docs-admin-revisions-panel" aria-label="Revision history">No revisions loaded.</section>
+      </section>
+    </section>
+
+    <section class="easiio-docs-admin-panel" aria-label="Export controls">
+      <label>
+        <span>target</span>
+        <select id="docs-admin-target" name="target">
+          <option value="nextjs-mdx">Next.js MDX</option>
+          <option value="docusaurus">Docusaurus</option>
+          <option value="mkdocs">MkDocs</option>
+          <option value="hugo">Hugo</option>
+          <option value="vitepress">VitePress</option>
+          <option value="static-html">Static HTML</option>
+        </select>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-preview" type="button">Preview files</button>
+        <button id="docs-admin-package" type="button">Create approved ZIP</button>
+        <button id="docs-admin-bundle-preview" type="button">Preview portable bundle</button>
+        <button id="docs-admin-bundle-package" type="button">Create portable bundle ZIP</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Package creation is confirmation-gated and only includes published public docs that explicitly target the selected framework. Portable bundles include published public docs for migration/import review.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" aria-label="Deployment handoff controls">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Deployment handoff</h2>
+        <p>Preview and package a deployment handoff ZIP for reviewed docs artifacts. This never publishes externally by itself.</p>
+      </div>
+      <label>
+        <span>Environment</span>
+        <select id="docs-admin-deploy-environment" name="deploy_environment">
+          <option value="preview">Preview</option>
+          <option value="staging">Staging</option>
+          <option value="production">Production</option>
+          <option value="local">Local</option>
+        </select>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-deploy-preview" type="button">Preview deployment handoff</button>
+        <button id="docs-admin-deploy-package" type="button">Create deployment handoff ZIP</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Deployment handoff is review-first and confirmation-gated with <code>confirmDeploymentPackage:true</code>. It does not push to Sitelet, WordPress, hosting, DNS, or production automatically.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-deployment-history-panel" aria-label="Deployment history controls">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Deployment audit operations</h2>
+        <p>Review, filter, summarize, and export the local audit log of confirmed deployment handoff ZIP packages. History is owner-protected and never stores auth tokens.</p>
+      </div>
+      <label>
+        <span>History target filter</span>
+        <select id="docs-admin-history-target" name="history_target">
+          <option value="">All targets</option>
+          <option value="static-html">Static HTML</option>
+          <option value="sitelet">Sitelet</option>
+          <option value="wordpress">WordPress</option>
+          <option value="nextjs-mdx">Next.js MDX</option>
+          <option value="docusaurus">Docusaurus</option>
+          <option value="mkdocs">MkDocs</option>
+          <option value="hugo">Hugo</option>
+          <option value="vitepress">VitePress</option>
+        </select>
+      </label>
+      <label>
+        <span>History environment filter</span>
+        <select id="docs-admin-history-environment" name="history_environment">
+          <option value="">All environments</option>
+          <option value="preview">Preview</option>
+          <option value="staging">Staging</option>
+          <option value="production">Production</option>
+          <option value="local">Local</option>
+        </select>
+      </label>
+      <label>
+        <span>History locale filter</span>
+        <input id="docs-admin-history-locale" name="history_locale" type="text" placeholder="en, zh, or blank for all" />
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-deploy-summary" type="button">Load audit summary</button>
+        <button id="docs-admin-deploy-history" type="button">Load deployment history</button>
+        <button id="docs-admin-deploy-history-csv" type="button">Export history CSV</button>
+      </div>
+      <p class="easiio-docs-admin-warning">The audit log records package metadata such as target, environment, locale, path, size, approver, manifest summary, and timestamp.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-package-operations-panel" aria-label="Deployment package operations">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Deployment package operations</h2>
+        <p>Inspect a package manifest, re-download a local ZIP, compare two handoff packages, and update manual checklist status. These operations are owner-protected and local-only.</p>
+      </div>
+      <label>
+        <span>Package audit ID</span>
+        <input id="docs-admin-package-id" name="package_id" type="number" min="1" placeholder="Audit record ID" />
+      </label>
+      <label>
+        <span>Compare left ID</span>
+        <input id="docs-admin-compare-left-id" name="compare_left_id" type="number" min="1" placeholder="Left package ID" />
+      </label>
+      <label>
+        <span>Compare right ID</span>
+        <input id="docs-admin-compare-right-id" name="compare_right_id" type="number" min="1" placeholder="Right package ID" />
+      </label>
+      <label>
+        <span>Checklist JSON</span>
+        <textarea id="docs-admin-checklist-json" rows="5" placeholder='{"manual_review":{"completed":true,"note":"Reviewed"}}'></textarea>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-package-detail" type="button">Load package detail</button>
+        <button id="docs-admin-package-download" type="button">Download package ZIP</button>
+        <button id="docs-admin-package-compare" type="button">Compare packages</button>
+        <button id="docs-admin-checklist-update" type="button">Update checklist</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Package operations never deploy externally; they only inspect/download existing local ZIPs and track manual deployment checklist progress.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-approval-workflow-panel" aria-label="Deployment approval workflow">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Deployment approval workflow</h2>
+        <p>Review package approval status, generate release notes, and lock approved/released handoff packages from further checklist mutation.</p>
+      </div>
+      <label>
+        <span>Approval status</span>
+        <select id="docs-admin-approval-status" name="approval_status">
+          <option value="reviewed">Reviewed</option>
+          <option value="approved">Approved</option>
+          <option value="released">Released</option>
+          <option value="rejected">Rejected</option>
+          <option value="draft">Draft</option>
+        </select>
+      </label>
+      <label>
+        <span>Approval actor</span>
+        <input id="docs-admin-approval-actor" name="approval_actor" type="text" placeholder="Reviewer / approver name" />
+      </label>
+      <label class="easiio-docs-admin-wide">
+        <span>Approval note</span>
+        <textarea id="docs-admin-approval-note" rows="3" placeholder="Review notes, approval comments, or release summary"></textarea>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-approval-update" type="button">Update approval</button>
+        <button id="docs-admin-release-notes" type="button">Load release notes</button>
+        <button id="docs-admin-approval-history" type="button">Load approval history</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Approval workflow is local metadata only. It does not publish, upload, deploy, or call external services.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-release-dashboard-panel" aria-label="Release dashboard">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Release dashboard</h2>
+        <p>Review deployment packages by approval state, readiness scoring, release queue, and generate an operator handoff report.</p>
+      </div>
+      <label>
+        <span>Approval status filter</span>
+        <select id="docs-admin-release-status-filter" name="release_status_filter">
+          <option value="">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="approved">Approved</option>
+          <option value="released">Released</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-release-dashboard" type="button">Load release dashboard</button>
+        <button id="docs-admin-handoff-report" type="button">Load operator handoff report</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Release dashboard and handoff report are local review artifacts only; they do not deploy externally.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-release-archive-panel" aria-label="Release archive">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Release archive</h2>
+        <p>Create immutable local release attestations with SHA-256 package, manifest, and handoff report hashes. Download archived operator reports for human deployment handoff.</p>
+      </div>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-release-archive-create" type="button">Create release archive</button>
+        <button id="docs-admin-release-archive-index" type="button">Load release archive index</button>
+        <button id="docs-admin-release-attestation" type="button">Load attestation</button>
+        <button id="docs-admin-release-report-download" type="button">Download report</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Release archive is local attestation metadata only. It does not deploy, publish, upload, or call external services.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-release-restore-panel" aria-label="Release restore / rollback">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Release restore / rollback</h2>
+        <p>Verify archived release integrity, generate rollback plans, and prepare local restore packages for operator review.</p>
+      </div>
+      <label>
+        <span>Previous / rollback target package ID</span>
+        <input id="docs-admin-rollback-previous-id" type="text" placeholder="Earlier archived package audit ID" />
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-archive-integrity" type="button">Verify archive integrity</button>
+        <button id="docs-admin-rollback-plan" type="button">Load rollback plan</button>
+        <button id="docs-admin-restore-package" type="button">Prepare restore package</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Restore packages are local-only planning artifacts. They do not deploy, publish, upload, or call external services.</p>
+    </section>
+
+    <section class="easiio-docs-admin-panel" id="docs-admin-connector-dry-run-panel" aria-label="Deployment connector dry-run">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Deployment connector dry-run</h2>
+        <p>Run local-only connector preflight checks for Sitelet, WordPress, and static hosting handoff readiness. Phase 21 adds Connector profiles and dry-run history without calling external APIs.</p>
+      </div>
+      <label>
+        <span>Connector type</span>
+        <select id="docs-admin-connector-type" name="connector_type">
+          <option value="sitelet">Sitelet</option>
+          <option value="wordpress">WordPress</option>
+          <option value="static-hosting">Static hosting</option>
+        </select>
+      </label>
+      <label class="easiio-docs-admin-wide">
+        <span>Connector config JSON</span>
+        <textarea id="docs-admin-connector-config" rows="5" placeholder='{"base_url":"https://sitelet.easiiodev.ai","api_token":"[REDACTED]"}'></textarea>
+      </label>
+      <label>
+        <span>Connector profile name</span>
+        <input id="docs-admin-connector-profile-name" type="text" placeholder="Sitelet staging profile" />
+      </label>
+      <label>
+        <span>Connector profile ID</span>
+        <input id="docs-admin-connector-profile-id" type="text" placeholder="Optional saved profile ID for preflight" />
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-connector-catalog" type="button">Load connector catalog</button>
+        <button id="docs-admin-connector-profile-save" type="button">Save connector profile</button>
+        <button id="docs-admin-connector-profile-list" type="button">Load connector profiles</button>
+        <button id="docs-admin-connector-dry-run-history" type="button">Load dry-run history</button>
+        <button id="docs-admin-connector-preflight" type="button">Run connector dry-run preflight</button>
+      </div>
+      <div class="easiio-docs-admin-section-heading">
+        <h3>Connector runbooks and comparison</h3>
+        <p>Phase 22 generates local-only Connector runbooks and compares dry-run results for operator review.</p>
+      </div>
+      <label>
+        <span>Runbook dry-run ID</span>
+        <input id="docs-admin-connector-runbook-id" type="text" placeholder="Dry-run ID for runbook" />
+      </label>
+      <label>
+        <span>Compare left dry-run ID</span>
+        <input id="docs-admin-connector-compare-left-id" type="text" placeholder="Earlier or preferred dry-run ID" />
+      </label>
+      <label>
+        <span>Compare right dry-run ID</span>
+        <input id="docs-admin-connector-compare-right-id" type="text" placeholder="Second dry-run ID" />
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-connector-runbook" type="button">Load connector runbook</button>
+        <button id="docs-admin-connector-dry-run-compare" type="button">Compare connector dry-runs</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Connector profiles store secret placeholders only. Connector dry-runs and Connector runbooks are local-only, redact secrets, and do not deploy, publish, upload, rollback, or call external services.</p>
+      <div class="easiio-docs-admin-section-heading">
+        <h3>Final operator release playbooks</h3>
+        <p>Phase 23 creates local-only human operator playbooks for Sitelet, WordPress, static hosting, and framework deployment handoff.</p>
+      </div>
+      <label>
+        <span>Operator playbook audit ID</span>
+        <input id="docs-admin-operator-playbook-id" type="text" placeholder="Deployment audit/package ID" />
+      </label>
+      <label>
+        <span>Operator playbook target</span>
+        <select id="docs-admin-operator-playbook-target">
+          <option value="sitelet">Sitelet</option>
+          <option value="wordpress">WordPress</option>
+          <option value="static-hosting">Static hosting</option>
+          <option value="nextjs-mdx">Next.js MDX</option>
+          <option value="docusaurus">Docusaurus</option>
+          <option value="mkdocs">MkDocs</option>
+          <option value="hugo">Hugo</option>
+          <option value="vitepress">VitePress</option>
+        </select>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-operator-playbook-catalog" type="button">Load operator playbook catalog</button>
+        <button id="docs-admin-operator-playbook-load" type="button">Load operator release playbook</button>
+      </div>
+      <div class="easiio-docs-admin-section-heading">
+        <h3>Packaging and onboarding</h3>
+        <p>Phase 24 generates local-only install, environment, backup/restore, Sitelet, WordPress, and admin workflow onboarding guides.</p>
+      </div>
+      <label>
+        <span>Onboarding site ID</span>
+        <input id="docs-admin-onboarding-site-id" type="text" placeholder="site_id for guide/checklist" />
+      </label>
+      <label>
+        <span>Onboarding integration</span>
+        <select id="docs-admin-onboarding-integration">
+          <option value="sitelet">Sitelet integration</option>
+          <option value="wordpress">WordPress plugin usage</option>
+          <option value="static-html">Static HTML</option>
+          <option value="nextjs-mdx">Next.js MDX</option>
+          <option value="docusaurus">Docusaurus</option>
+          <option value="mkdocs">MkDocs</option>
+          <option value="hugo">Hugo</option>
+          <option value="vitepress">VitePress</option>
+        </select>
+      </label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-onboarding-guide" type="button">Load onboarding guide</button>
+        <button id="docs-admin-onboarding-checklist" type="button">Load onboarding checklist</button>
+      </div>
+      <div class="easiio-docs-admin-section-heading">
+        <h3>Final QA and v1 release</h3>
+        <p>Phase 25 generates the final local-only QA summary, release freeze checklist, and confirmation-gated v1 release package.</p>
+      </div>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-v1-release-summary" type="button">Load v1 release summary</button>
+        <button id="docs-admin-v1-release-package" type="button">Create confirmed v1 release package</button>
+      </div>
+    </section>
+
+    <section class="easiio-docs-admin-panel easiio-docs-admin-import" aria-label="Import controls">
+      <div class="easiio-docs-admin-section-heading">
+        <h2>Import docs</h2>
+        <p>Paste a JSON array of files from Markdown folders, Docusaurus, MkDocs, VitePress, Hugo, or an Easiio portable bundle. Preview detects slug conflicts before execution.</p>
+      </div>
+      <label>
+        <span>source_format</span>
+        <select id="docs-admin-import-source-format" name="source_format">
+          <option value="markdown-folder">Markdown folder</option>
+          <option value="docusaurus">Docusaurus</option>
+          <option value="mkdocs">MkDocs</option>
+          <option value="vitepress">VitePress</option>
+          <option value="hugo">Hugo</option>
+          <option value="easiio-bundle">Easiio portable bundle</option>
+        </select>
+      </label>
+      <label>
+        <span>Default status</span>
+        <select id="docs-admin-import-status"><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select>
+      </label>
+      <label>
+        <span>Default visibility</span>
+        <select id="docs-admin-import-visibility"><option value="private">Private</option><option value="public">Public</option><option value="login_required">Login required</option><option value="internal">Internal</option></select>
+      </label>
+      <label class="easiio-docs-admin-wide"><span>Files JSON</span><textarea id="docs-admin-import-files" rows="10" placeholder='[{"path":"docs/getting-started.md","content":"---\\ntitle: Getting Started\\n---\\n# Getting Started"}]'></textarea></label>
+      <div class="easiio-docs-admin-actions">
+        <button id="docs-admin-import-preview" type="button">Preview import</button>
+        <button id="docs-admin-import-execute" type="button">Execute approved import</button>
+      </div>
+      <p class="easiio-docs-admin-warning">Import execution is owner-protected and requires browser confirmation plus <code>confirmImport:true</code>.</p>
+    </section>
+
+    <section class="easiio-docs-admin-summary" id="docs-admin-summary"></section>
+    <section class="easiio-docs-admin-files" id="docs-admin-files" aria-label="Generated files and import previews"></section>
+  </main>
+  <script src="admin.js" data-easiio-docs-admin></script>
+</body>
+</html>

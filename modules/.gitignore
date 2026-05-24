@@ -1,0 +1,17 @@
+# Runtime/private module artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.env
+.env
+.env.*
+data/
+dist/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.zip
+*.pdf
+*.bak
+*.bak-*

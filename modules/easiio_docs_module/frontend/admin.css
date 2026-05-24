@@ -1,0 +1,110 @@
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.easiio-docs-admin { max-width: 1280px; margin: 0 auto; padding: 36px 20px 72px; }
+.easiio-docs-admin-hero,
+.easiio-docs-admin-panel,
+.easiio-docs-admin-status,
+.easiio-docs-admin-file,
+.easiio-docs-admin-stat,
+.easiio-docs-admin-editor,
+.easiio-docs-admin-doc-list,
+.easiio-docs-admin-revisions {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.07);
+}
+.easiio-docs-admin-hero { background: linear-gradient(135deg, #eff6ff 0%, #ffffff 56%, #f5f3ff 100%); padding: clamp(24px, 4vw, 44px); }
+.easiio-docs-admin-hero .eyebrow { color: #2563eb; font-size: 12px; font-weight: 900; letter-spacing: .12em; margin: 0 0 10px; text-transform: uppercase; }
+.easiio-docs-admin-hero h1 { font-size: clamp(36px, 7vw, 72px); line-height: .96; margin: 0 0 14px; }
+.easiio-docs-admin-hero p { color: #475569; font-size: 18px; line-height: 1.65; margin: 0; max-width: 920px; }
+.easiio-docs-admin-panel { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 22px; padding: 20px; }
+.easiio-docs-admin-panel label span,
+.easiio-docs-admin-editor label span { color: #475569; display: block; font-size: 13px; font-weight: 800; margin-bottom: 7px; }
+.easiio-docs-admin-panel input,
+.easiio-docs-admin-panel select,
+.easiio-docs-admin-editor input,
+.easiio-docs-admin-editor select,
+.easiio-docs-admin-editor textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  color: #0f172a;
+  font: inherit;
+  min-height: 46px;
+  padding: 10px 13px;
+  width: 100%;
+}
+.easiio-docs-admin-editor textarea { line-height: 1.55; resize: vertical; }
+.easiio-docs-admin-actions { align-items: end; display: flex; flex-wrap: wrap; gap: 10px; grid-column: 1 / -1; }
+.easiio-docs-admin-actions button,
+.easiio-docs-admin-doc-list button,
+.easiio-docs-admin-file button {
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 42px;
+  padding: 0 16px;
+}
+#docs-admin-preview,
+#docs-admin-load-docs,
+#docs-admin-save-doc { background: #2563eb; color: #fff; }
+#docs-admin-package { background: #0f172a; color: #fff; }
+#docs-admin-new-doc { background: #ecfdf5; color: #166534; }
+#docs-admin-delete-doc { background: #fef2f2; color: #991b1b; }
+#docs-admin-revisions { background: #f5f3ff; color: #5b21b6; }
+.easiio-docs-admin-warning { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; color: #9a3412; grid-column: 1 / -1; margin: 0; padding: 12px 14px; }
+.easiio-docs-admin-status { color: #334155; margin-top: 18px; padding: 14px 16px; }
+.easiio-docs-admin-status[data-kind="success"] { background: #ecfdf5; border-color: #bbf7d0; color: #166534; }
+.easiio-docs-admin-status[data-kind="error"] { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.easiio-docs-admin-workspace { display: grid; gap: 20px; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); margin-top: 20px; }
+.easiio-docs-admin-doc-list { align-self: start; padding: 18px; }
+.easiio-docs-admin-section-heading h2 { font-size: 22px; margin: 0 0 6px; }
+.easiio-docs-admin-section-heading p { color: #64748b; margin: 0 0 14px; }
+.easiio-docs-admin-list-empty { color: #64748b; padding: 14px 0; }
+.easiio-docs-admin-doc-list-items { display: grid; gap: 10px; }
+.easiio-docs-admin-doc-list button { background: #f8fafc; border: 1px solid #e2e8f0; color: #0f172a; display: block; height: auto; padding: 12px; text-align: left; width: 100%; }
+.easiio-docs-admin-doc-list button strong,
+.easiio-docs-admin-doc-list button span { display: block; }
+.easiio-docs-admin-doc-list button span { color: #64748b; font-size: 12px; margin-top: 5px; }
+.easiio-docs-admin-editor { padding: 18px; }
+.easiio-docs-admin-form-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.easiio-docs-admin-wide { display: block; margin-top: 14px; }
+.easiio-docs-admin-fieldset { border: 1px solid #e2e8f0; border-radius: 18px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin: 16px 0; padding: 16px; }
+.easiio-docs-admin-fieldset legend { color: #475569; font-weight: 900; padding: 0 8px; }
+.easiio-docs-admin-fieldset label,
+.easiio-docs-admin-checkbox { align-items: center; color: #334155; display: flex; gap: 8px; font-weight: 700; }
+.easiio-docs-admin-fieldset input,
+.easiio-docs-admin-checkbox input { min-height: auto; width: auto; }
+.easiio-docs-admin-revisions { color: #334155; margin-top: 16px; padding: 14px; }
+.easiio-docs-admin-revisions article { border-top: 1px solid #e2e8f0; padding: 12px 0; }
+.easiio-docs-admin-revisions article:first-child { border-top: 0; }
+.easiio-docs-admin-revisions strong,
+.easiio-docs-admin-revisions span { display: block; }
+.easiio-docs-admin-revisions span { color: #64748b; font-size: 12px; margin-top: 4px; }
+.easiio-docs-admin-summary { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-top: 18px; }
+.easiio-docs-admin-stat { padding: 16px; }
+.easiio-docs-admin-stat strong,
+.easiio-docs-admin-stat span { display: block; }
+.easiio-docs-admin-stat strong { font-size: 22px; overflow-wrap: anywhere; }
+.easiio-docs-admin-stat span { color: #64748b; font-size: 12px; font-weight: 800; margin-top: 6px; text-transform: uppercase; }
+.easiio-docs-admin-files { display: grid; gap: 16px; margin-top: 20px; }
+.easiio-docs-admin-file { overflow: hidden; }
+.easiio-docs-admin-file header { align-items: center; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; gap: 12px; padding: 13px 16px; }
+.easiio-docs-admin-file header strong { overflow-wrap: anywhere; }
+.easiio-docs-admin-file button { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; padding: 7px 11px; }
+.easiio-docs-admin-file pre { background: #0f172a; color: #e2e8f0; margin: 0; max-height: 420px; overflow: auto; padding: 18px; white-space: pre-wrap; }
+.easiio-docs-admin-empty { color: #64748b; margin: 0; padding: 18px; }
+@media (max-width: 900px) {
+  .easiio-docs-admin { padding: 20px 12px 48px; }
+  .easiio-docs-admin-workspace { grid-template-columns: 1fr; }
+  .easiio-docs-admin-actions { align-items: stretch; flex-direction: column; }
+  .easiio-docs-admin-actions button { width: 100%; }
+}

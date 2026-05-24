@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Easiio Docs Module Demo</title>
+  <meta name="description" content="Local demo for the reusable Easiio Docs Module embeddable widget." />
+  <link rel="stylesheet" href="docs.css" />
+  <style>
+    body { margin: 0; background: #0f172a; padding: 32px; }
+    .demo-wrap { max-width: 1180px; margin: 0 auto; }
+    .demo-note { color: #cbd5e1; font-family: system-ui, sans-serif; margin: 0 0 18px; }
+  </style>
+</head>
+<body>
+  <main class="demo-wrap">
+    <p class="demo-note">Run <code>python3 backend/app.py --host 127.0.0.1 --port 8110</code>, seed at least one published doc, then open this demo.</p>
+    <div id="easiio-docs-root"></div>
+  </main>
+  <script
+    src="docs.js"
+    data-easiio-docs
+    data-api-base="http://localhost:8110"
+    data-site-id="ai-solo-company"
+    data-mode="public"
+    data-root-selector="#easiio-docs-root"
+    data-title="AI Solo Company Documentation"
+    data-subtitle="Reusable docs, integration guides, and website handoff notes."
+    data-target-filter="sitelet">
+  </script>
+</body>
+</html>
