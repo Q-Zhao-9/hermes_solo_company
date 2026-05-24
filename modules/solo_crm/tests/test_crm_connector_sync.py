@@ -37,6 +37,7 @@ class CRMConnectorSyncTests(unittest.TestCase):
                 }
             }), encoding="utf-8")
             os.environ["SOLO_CRM_CONNECTORS_CONFIG"] = str(config_path)
+            os.environ["SOLO_CRM_SYNC_LOG"] = str(Path(td) / "sync-log.json")
             os.environ["HUBSPOT_TEST_TOKEN"] = "secret-token"
             try:
                 with patch("connectors.sync.HubSpotConnector") as hubspot_cls:
@@ -50,6 +51,7 @@ class CRMConnectorSyncTests(unittest.TestCase):
                 self.assertNotIn("secret-token", json.dumps(result))
             finally:
                 os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
+                os.environ.pop("SOLO_CRM_SYNC_LOG", None)
                 os.environ.pop("HUBSPOT_TEST_TOKEN", None)
 
     def test_sync_contact_to_google_sheets_when_enabled(self):
@@ -70,6 +72,7 @@ class CRMConnectorSyncTests(unittest.TestCase):
                 }
             }), encoding="utf-8")
             os.environ["SOLO_CRM_CONNECTORS_CONFIG"] = str(config_path)
+            os.environ["SOLO_CRM_SYNC_LOG"] = str(Path(td) / "sync-log.json")
             os.environ["GOOGLE_SHEETS_TEST_WEBHOOK"] = "https://script.google.com/macros/s/secret-webhook/exec"
             try:
                 with patch("connectors.sync.GoogleSheetsConnector") as sheets_cls:
@@ -83,6 +86,7 @@ class CRMConnectorSyncTests(unittest.TestCase):
                 self.assertNotIn("secret-webhook", json.dumps(result))
             finally:
                 os.environ.pop("SOLO_CRM_CONNECTORS_CONFIG", None)
+                os.environ.pop("SOLO_CRM_SYNC_LOG", None)
                 os.environ.pop("GOOGLE_SHEETS_TEST_WEBHOOK", None)
 
     def test_sync_disabled_site_returns_safe_skipped_status(self):

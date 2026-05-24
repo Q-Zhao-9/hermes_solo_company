@@ -71,7 +71,8 @@
       siteId,
       formConfig: normalizeConfig(existing.formConfig || DEFAULT_FORM_CONFIG),
       ragItems: existing.ragItems || [],
-      crmConnectors: existing.crmConnectors || { enabled: false, providers: {} }
+      crmConnectors: existing.crmConnectors || { enabled: false, providers: {} },
+      crmSyncLog: existing.crmSyncLog || []
     };
     stateByRoot.set(root, state);
     root.classList.add('easiio-chatbot-customizer');
@@ -153,6 +154,14 @@
                 <button class="button primary" type="submit">Save CRM connectors</button>
               </div>
             </form>
+            <div class="chatbot-sync-log-header">
+              <div>
+                <strong>Sync log</strong>
+                <p class="muted small">Review recent external CRM sync attempts and retry failed queue items without exposing secrets.</p>
+              </div>
+              <button class="button" type="button" data-reload-crm-sync-log>Reload log</button>
+            </div>
+            <div data-crm-sync-log class="chatbot-sync-log" aria-live="polite"></div>
           </article>
           <article class="chatbot-admin-card chatbot-kb-card">
             <div class="chatbot-card-header">
@@ -182,6 +191,7 @@
     renderPreview(root);
     loadFormConfig(root);
     loadCrmConnectors(root);
+    loadCrmSyncLog(root);
     loadKnowledgeBase(root);
   }
 
@@ -382,6 +392,54 @@
     status(root, `Saved CRM connectors for ${state.siteId}`, 'success');
   }
 
+
+  function renderCrmSyncLog(root) {
+    const state = currentState(root);
+    const list = root.querySelector('[data-crm-sync-log]');
+    if (!list) return;
+    const events = Array.isArray(state.crmSyncLog) ? state.crmSyncLog : [];
+    if (!events.length) {
+      list.innerHTML = '<p class="muted small">No CRM sync log events yet.</p>';
+      return;
+    }
+    list.innerHTML = events.map((event) => `
+      <article class="chatbot-sync-log-item" data-sync-event-id="${escapeHtml(event.id)}" data-sync-status="${escapeHtml(event.status || '')}">
+        <div>
+          <strong>${escapeHtml(event.provider || 'provider')} · ${escapeHtml(event.status || 'unknown')}</strong>
+          <small>${escapeHtml(event.created_at || '')}</small>
+          <p class="muted small">Contact #${escapeHtml(event.contact_id || '')}${event.error ? ` — ${escapeHtml(event.error)}` : ''}</p>
+        </div>
+        ${event.status === 'failed' && event.retryable ? `<button class="button" type="button" data-retry-crm-sync="${escapeHtml(event.id)}">Retry sync</button>` : ''}
+      </article>`).join('');
+  }
+
+  async function loadCrmSyncLog(root) {
+    const state = currentState(root);
+    try {
+      const response = await fetch(apiUrl(state.apiBase, `/api/crm-connectors/sync-log?site_id=${encodeURIComponent(readSiteId(root))}&limit=25`), { credentials: 'same-origin' });
+      const body = await response.json();
+      if (!response.ok || body.ok === false) throw new Error(body.error || 'Failed to load CRM sync log');
+      state.crmSyncLog = Array.isArray(body.events) ? body.events : [];
+      renderCrmSyncLog(root);
+    } catch (error) {
+      status(root, `CRM sync log load failed: ${error.message}`, 'warning');
+    }
+  }
+
+  async function retryCrmSyncEvent(root, eventId) {
+    const state = currentState(root);
+    const response = await fetch(apiUrl(state.apiBase, '/api/crm-connectors/retry'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ event_id: eventId })
+    });
+    const body = await response.json();
+    if (!response.ok || body.ok === false) throw new Error(body.error || (body.retry && body.retry.error) || 'Failed to retry CRM sync');
+    await loadCrmSyncLog(root);
+    status(root, `Retry sync completed for ${state.siteId}`, 'success');
+  }
+
   async function loadKnowledgeBase(root) {
     const state = currentState(root);
     try {
@@ -488,6 +546,8 @@
         if (target.matches('[data-reset-defaults]')) { event.preventDefault(); currentState(root).formConfig = normalizeConfig(DEFAULT_FORM_CONFIG); fillForm(root); renderFieldRows(root); renderPreview(root); }
         if (target.matches('[data-reload-form]')) { event.preventDefault(); await loadFormConfig(root); }
         if (target.matches('[data-reload-crm-connectors]')) { event.preventDefault(); await loadCrmConnectors(root); }
+        if (target.matches('[data-reload-crm-sync-log]')) { event.preventDefault(); await loadCrmSyncLog(root); }
+        if (target.matches('[data-retry-crm-sync]')) { event.preventDefault(); await retryCrmSyncEvent(root, target.dataset.retryCrmSync); }
         if (target.matches('[data-reload-kb]')) { event.preventDefault(); await loadKnowledgeBase(root); }
         if (target.matches('[data-clear-kb-form]')) { event.preventDefault(); clearKnowledgeForm(root); }
         if (target.matches('[data-edit-kb]')) { event.preventDefault(); editKnowledgeItem(root, target.dataset.editKb); }
@@ -528,6 +588,8 @@
     saveFormConfig: (root) => saveFormConfig(root),
     loadCrmConnectors: (root) => loadCrmConnectors(root),
     saveCrmConnectors: (root) => saveCrmConnectors(root),
+    loadCrmSyncLog: (root) => loadCrmSyncLog(root),
+    retryCrmSyncEvent: (root, eventId) => retryCrmSyncEvent(root, eventId),
     addFormField: (root) => addFormField(root),
     removeFormField: (root, index) => removeFormField(root, index),
     loadKnowledgeBase: (root) => loadKnowledgeBase(root),

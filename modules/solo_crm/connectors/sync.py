@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .sync_log import append_sync_event, get_sync_event, update_sync_event
 from .config import load_connectors_config, provider_config_for_site
 from .hubspot import HubSpotConnector
 from .google_sheets import GoogleSheetsConnector
@@ -80,7 +81,8 @@ def _sync_google_sheets(config: dict[str, Any], contact: dict[str, Any], company
 
 
 def sync_contact_to_enabled_crms(crm: Any, site_id: str, contact_id: int, *, deal_id: int | None = None,
-                                 activity_id: int | None = None) -> dict[str, Any]:
+                                 activity_id: int | None = None, provider_names: list[str] | None = None,
+                                 retry_of: str | None = None) -> dict[str, Any]:
     """Sync one local CRM contact/deal/activity to enabled external CRM providers.
 
     Local CRM writes are the source of truth; this function returns sanitized status
@@ -88,6 +90,7 @@ def sync_contact_to_enabled_crms(crm: Any, site_id: str, contact_id: int, *, dea
     """
     config = load_connectors_config()
     providers: list[dict[str, Any]] = []
+    enabled_filter = set(provider_names or [])
     contact = crm.get_contact(int(contact_id)) if contact_id else None
     if not contact:
         return {"enabled": False, "ok": False, "providers": [], "error": "contact_not_found"}
@@ -98,17 +101,65 @@ def sync_contact_to_enabled_crms(crm: Any, site_id: str, contact_id: int, *, dea
     visitor = _get_visitor(crm, contact)
 
     hubspot_config = provider_config_for_site(config, site_id, "hubspot")
-    if hubspot_config:
+    if hubspot_config and (not enabled_filter or "hubspot" in enabled_filter):
         try:
-            providers.append(_sync_hubspot(hubspot_config, contact, company, website, visitor, deal, activity))
+            result = _sync_hubspot(hubspot_config, contact, company, website, visitor, deal, activity)
+            providers.append(result)
+            append_sync_event(
+                site_id=site_id, provider="hubspot", status="success", ok=True,
+                contact_id=contact_id, deal_id=deal_id, activity_id=activity_id,
+                result=result, retryable=False, retry_of=retry_of,
+            )
         except Exception as exc:  # external sync must not break local lead capture
-            providers.append({"provider": "hubspot", "ok": False, "error": _safe_error(exc)})
+            result = {"provider": "hubspot", "ok": False, "error": _safe_error(exc)}
+            providers.append(result)
+            append_sync_event(
+                site_id=site_id, provider="hubspot", status="failed", ok=False,
+                contact_id=contact_id, deal_id=deal_id, activity_id=activity_id,
+                error=result["error"], result=result, retryable=True, retry_of=retry_of,
+            )
 
     google_sheets_config = provider_config_for_site(config, site_id, "google_sheets")
-    if google_sheets_config:
+    if google_sheets_config and (not enabled_filter or "google_sheets" in enabled_filter):
         try:
-            providers.append(_sync_google_sheets(google_sheets_config, contact, company, website, visitor, deal, activity))
+            result = _sync_google_sheets(google_sheets_config, contact, company, website, visitor, deal, activity)
+            providers.append(result)
+            append_sync_event(
+                site_id=site_id, provider="google_sheets", status="success", ok=True,
+                contact_id=contact_id, deal_id=deal_id, activity_id=activity_id,
+                result=result, retryable=False, retry_of=retry_of,
+            )
         except Exception as exc:  # external sync must not break local lead capture
-            providers.append({"provider": "google_sheets", "ok": False, "error": _safe_error(exc)})
+            result = {"provider": "google_sheets", "ok": False, "error": _safe_error(exc)}
+            providers.append(result)
+            append_sync_event(
+                site_id=site_id, provider="google_sheets", status="failed", ok=False,
+                contact_id=contact_id, deal_id=deal_id, activity_id=activity_id,
+                error=result["error"], result=result, retryable=True, retry_of=retry_of,
+            )
 
     return {"enabled": bool(providers), "ok": bool(providers) and all(item.get("ok") for item in providers), "providers": providers}
+
+
+def retry_sync_event(crm: Any, event_id: str) -> dict[str, Any]:
+    """Retry one failed provider sync event by id and return sanitized status."""
+    event = get_sync_event(str(event_id or ""))
+    if not event:
+        return {"enabled": False, "ok": False, "providers": [], "error": "event_not_found"}
+    if event.get("status") != "failed" or not event.get("retryable"):
+        return {"enabled": False, "ok": False, "providers": [], "error": "event_not_retryable"}
+    contact_id = event.get("contact_id")
+    if not contact_id:
+        return {"enabled": False, "ok": False, "providers": [], "error": "contact_not_found"}
+    result = sync_contact_to_enabled_crms(
+        crm,
+        str(event.get("site_id") or "default"),
+        int(contact_id),
+        deal_id=int(event["deal_id"]) if event.get("deal_id") is not None else None,
+        activity_id=int(event["activity_id"]) if event.get("activity_id") is not None else None,
+        provider_names=[str(event.get("provider") or "")],
+        retry_of=str(event.get("id") or event_id),
+    )
+    if result.get("ok"):
+        update_sync_event(str(event_id), {"retry_status": "retried"})
+    return result

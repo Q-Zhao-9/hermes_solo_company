@@ -58,6 +58,7 @@ class ChatbotBackendTests(unittest.TestCase):
         os.environ.pop("HUBSPOT_TEST_TOKEN", None)
         os.environ.pop("HUBSPOT_TEST_PRIVATE_APP_TOKEN", None)
         os.environ.pop("GOOGLE_SHEETS_TEST_WEBHOOK", None)
+        os.environ.pop("SOLO_CRM_SYNC_LOG", None)
 
     def test_health_response_reports_ok(self):
         response = self.app.route_request("GET", "/health", {}, b"", self.crm)
@@ -198,6 +199,35 @@ class ChatbotBackendTests(unittest.TestCase):
         activities = self.crm.list_activities(contact_id=contacts[0]["id"])
         self.assertEqual(len(activities), 1)
         self.assertIn("I want a demo", activities[0]["body"])
+
+    def test_crm_connector_sync_log_api_lists_and_retries_admin_safe_events(self):
+        os.environ["SOLO_CRM_SYNC_LOG"] = str(Path(self.tmp.name) / "crm_sync_log.json")
+        from connectors.sync_log import append_sync_event
+
+        event = append_sync_event(
+            site_id="easiio-main",
+            provider="hubspot",
+            status="failed",
+            ok=False,
+            contact_id=101,
+            deal_id=202,
+            activity_id=303,
+            error="provider_error",
+            retryable=True,
+        )
+        status = self.app.route_request("GET", "/api/crm-connectors/sync-log?site_id=easiio-main", {}, b"", self.crm)
+        self.assertEqual(status.status, 200)
+        self.assertEqual(status.body["events"][0]["id"], event["id"])
+        self.assertEqual(status.body["events"][0]["status"], "failed")
+        self.assertNotIn("access_token", json.dumps(status.body))
+        self.assertNotIn("webhook_url", json.dumps(status.body))
+
+        retry_result = {"enabled": True, "ok": True, "providers": [{"provider": "hubspot", "ok": True}]}
+        with patch.object(self.app, "retry_sync_event", return_value=retry_result) as retry:
+            response = self.app.route_request("POST", "/api/crm-connectors/retry", {}, json.dumps({"event_id": event["id"]}).encode(), self.crm)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body["retry"], retry_result)
+        retry.assert_called_once_with(self.crm, event["id"])
 
     def test_message_with_email_runs_optional_external_crm_sync_without_blocking_lead_capture(self):
         payload = {

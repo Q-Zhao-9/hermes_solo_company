@@ -34,12 +34,16 @@ if str(SOLO_CRM_ROOT) not in sys.path:
 
 from crm_core import SoloCRM  # noqa: E402
 try:  # noqa: E402
-    from connectors.sync import sync_contact_to_enabled_crms  # type: ignore
+    from connectors.sync import retry_sync_event, sync_contact_to_enabled_crms  # type: ignore
     from connectors.config import load_connectors_config, sanitize_connectors_config, connectors_config_path  # type: ignore
+    from connectors.sync_log import list_sync_events  # type: ignore
 except Exception:  # pragma: no cover - optional connector package may be absent in older installs
     def sync_contact_to_enabled_crms(crm: SoloCRM, site_id: str, contact_id: int, *, deal_id: int | None = None,
                                      activity_id: int | None = None) -> dict[str, Any]:
         return {"enabled": False, "ok": True, "providers": []}
+
+    def retry_sync_event(crm: SoloCRM, event_id: str) -> dict[str, Any]:
+        return {"enabled": False, "ok": False, "providers": [], "error": "sync_log_unavailable"}
 
     def load_connectors_config(path: str | Path | None = None) -> dict[str, Any]:
         return {"sites": {}}
@@ -49,6 +53,9 @@ except Exception:  # pragma: no cover - optional connector package may be absent
 
     def connectors_config_path() -> Path:
         return Path(os.environ.get("SOLO_CRM_CONNECTORS_CONFIG", str(ROOT / "data" / "crm_connectors.json"))).expanduser()
+
+    def list_sync_events(*, site_id: str | None = None, status: str | None = None, provider: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        return []
 
 
 def load_env_file(path: Path) -> None:
@@ -550,6 +557,34 @@ def crm_connectors_config_upsert_handler(payload: dict[str, Any]) -> Response:
     save_connectors_config(config)
     public_site_config = (sanitize_connectors_config(config).get("sites") or {}).get(site_id) or {"enabled": False, "providers": {}}
     return json_response(200, {"ok": True, "site_id": site_id, "site_config": public_site_config})
+
+
+
+
+def crm_connectors_sync_log_handler(payload: dict[str, Any]) -> Response:
+    site_id = sanitize_text(payload.get("site_id") or "", 100)
+    status = sanitize_text(payload.get("status") or "", 40)
+    provider = sanitize_text(payload.get("provider") or "", 40)
+    try:
+        limit = int(payload.get("limit") or 50)
+    except Exception:
+        limit = 50
+    events = list_sync_events(
+        site_id=site_id or None,
+        status=status or None,
+        provider=provider or None,
+        limit=max(1, min(limit, 200)),
+    )
+    return json_response(200, {"ok": True, "site_id": site_id or None, "events": events})
+
+
+def crm_connectors_retry_handler(payload: dict[str, Any], crm: SoloCRM) -> Response:
+    event_id = sanitize_text(payload.get("event_id") or payload.get("eventId") or "", 80)
+    if not event_id:
+        return json_response(400, {"ok": False, "error": "event_id_required"})
+    result = retry_sync_event(crm, event_id)
+    status = 200 if result.get("ok") else 409
+    return json_response(status, {"ok": bool(result.get("ok")), "event_id": event_id, "retry": result})
 
 
 def render_email_template(template: str, values: dict[str, Any]) -> str:
@@ -1334,6 +1369,8 @@ def route_request(method: str, path: str, headers: dict[str, str], body: bytes, 
         return email_agent_config_handler({key: values[-1] if values else "" for key, values in parse_qs(parsed.query).items()})
     if method == "GET" and route == "/api/crm-connectors/config":
         return crm_connectors_config_handler({key: values[-1] if values else "" for key, values in parse_qs(parsed.query).items()})
+    if method == "GET" and route == "/api/crm-connectors/sync-log":
+        return crm_connectors_sync_log_handler({key: values[-1] if values else "" for key, values in parse_qs(parsed.query).items()})
     if method != "POST":
         return json_response(405, {"ok": False, "error": "method not allowed"})
     try:
@@ -1352,6 +1389,8 @@ def route_request(method: str, path: str, headers: dict[str, str], body: bytes, 
         return email_agent_config_upsert_handler(payload)
     if route == "/api/crm-connectors/config":
         return crm_connectors_config_upsert_handler(payload)
+    if route == "/api/crm-connectors/retry":
+        return crm_connectors_retry_handler(payload, crm)
     if route == "/api/rag/content":
         return rag_content_upsert_handler(payload)
     if route == "/api/rag/content/delete":

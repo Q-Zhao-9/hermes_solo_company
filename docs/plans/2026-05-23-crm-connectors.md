@@ -451,12 +451,48 @@ node modules/website_chatbot/tests/admin_customizer_static.test.js
 
 ---
 
+## Phase 4 Addendum: Sync Log and Retry Queue
+
+Phase 4 adds a local, file-backed CRM connector sync log and admin retry queue. Lead capture still writes to Solo CRM first; external providers remain optional and non-blocking.
+
+Implemented behavior:
+
+- Sync log core:
+  - `modules/solo_crm/connectors/sync_log.py`
+  - Default store: `~/.hermes/tools/solo_crm/data/crm_sync_log.json`
+  - Override: `SOLO_CRM_SYNC_LOG=/path/to/crm_sync_log.json`
+- Sync orchestration:
+  - `sync_contact_to_enabled_crms(...)` appends one sanitized event per provider attempt.
+  - Failed provider attempts are marked `retryable` with local `contact_id`, `deal_id`, and `activity_id` references.
+  - `retry_sync_event(crm, event_id)` retries only the provider from the failed event and marks the original event as retried after success.
+- Chatbot backend API:
+  - `GET /api/crm-connectors/sync-log?site_id=...&limit=25`
+  - `POST /api/crm-connectors/retry` with `{ "event_id": "..." }`
+- Admin customizer UI:
+  - The CRM connectors card now includes a **Sync log** section.
+  - Failed retryable events show a **Retry sync** button.
+- Secret safety:
+  - Sync log events are sanitized before write and before API response.
+  - Raw tokens, webhook URLs, env var values, and sensitive provider config are not logged or returned.
+  - `/api/crm-connectors/*` remains admin-only through the existing gateway protection.
+
+Verification added:
+
+```bash
+python3 modules/solo_crm/tests/test_crm_connector_sync_log.py
+python3 modules/website_chatbot/tests/test_backend.py
+node modules/website_chatbot/tests/admin_customizer_static.test.js
+```
+
+---
+
 ## Recommended Rollout
 
 1. Build HubSpot connector in source-only repo first.
 2. Add one demo config using fake env var names only.
 3. Use the Phase 3 admin UI for selecting connector provider per site.
-4. Validate with a real HubSpot test account only after code review.
-5. Add Airtable connector for small-business and student demos.
-6. Add sync logs/retry queue and external ID persistence.
-7. Add Zoho / Bitrix24 / Freshsales based on user demand.
+4. Use the Phase 4 sync log/retry queue for failed external sync attempts.
+5. Validate with a real HubSpot test account only after code review.
+6. Add Airtable connector for small-business and student demos.
+7. Add external ID persistence for idempotent provider updates.
+8. Add Zoho / Bitrix24 / Freshsales based on user demand.
