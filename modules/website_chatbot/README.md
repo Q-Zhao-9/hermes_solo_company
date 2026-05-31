@@ -47,6 +47,13 @@ Current status: **v2 local backend + Solo CRM bridge implemented**.
   - `POST /api/rag/content`
   - `POST /api/rag/content/delete`
 - Optional chatbot UI knowledge setup panel with `data-rag-admin="true"`.
+- Optional chatbot voice features:
+  - `data-voice-enabled="true"` for audio playback of bot replies;
+  - `data-voice-input-enabled="true"` for browser speech-to-text input;
+  - `data-voice-call-enabled="true"` plus `data-voice-call-api-base="..."` for a **Start voice call** button inside the chatbot interface.
+- AI Solo Company voice-call chatbot demo:
+  - `widget/ai-solo-company-voice-chatbot.html`;
+  - `docs/ai-solo-company-chatbot-voice-call-demo.md`.
 - Deterministic email/phone extraction.
 - Demo/pricing/sales intent detection.
 - Solo CRM writes:
@@ -123,8 +130,13 @@ That should create a Solo CRM contact, deal, and activity.
   data-launcher-style="bubble"
   data-launcher-size="small"
   data-auto-open="false"
-  data-rag-admin="false"
-  data-greeting="Hi, I can help with AI automation or book a demo.">
+    data-rag-admin="false"
+    data-voice-enabled="true"
+    data-voice-input-enabled="true"
+    data-voice-call-enabled="true"
+    data-voice-call-api-base="https://voice-api.example.com"
+    data-voice-call-label="Start voice call"
+    data-greeting="Hi, I can help with AI automation or book a demo.">
 </script>
 ```
 

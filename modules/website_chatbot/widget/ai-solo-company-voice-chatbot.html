@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Solo Company — Chat + Voice Call Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #0f172a;
+      --muted: #475569;
+      --blue: #2563eb;
+      --violet: #7c3aed;
+      --line: rgba(148, 163, 184, 0.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), transparent 34rem),
+        radial-gradient(circle at 70% 20%, rgba(124, 58, 237, 0.14), transparent 30rem),
+        linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+    header, main { width: min(1120px, calc(100vw - 40px)); margin: 0 auto; }
+    header { padding: 28px 0 12px; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    .brand { font-weight: 850; letter-spacing: -0.03em; }
+    .badge { border: 1px solid var(--line); background: rgba(255,255,255,0.72); padding: 8px 12px; border-radius: 999px; color: var(--muted); font-size: 13px; }
+    .hero { padding: 78px 0 52px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr); gap: 32px; align-items: center; }
+    h1 { margin: 0; font-size: clamp(42px, 7vw, 82px); line-height: 0.94; letter-spacing: -0.07em; }
+    .lead { margin: 24px 0 0; font-size: 20px; line-height: 1.65; color: var(--muted); max-width: 720px; }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    .button { display: inline-flex; align-items: center; gap: 9px; border: 0; border-radius: 999px; padding: 13px 18px; font-weight: 800; text-decoration: none; cursor: pointer; }
+    .button.primary { background: linear-gradient(135deg, var(--blue), var(--violet)); color: #fff; box-shadow: 0 18px 45px rgba(37, 99, 235, 0.28); }
+    .button.secondary { color: var(--blue); background: rgba(255,255,255,0.84); border: 1px solid rgba(37,99,235,0.22); }
+    .panel { background: rgba(255,255,255,0.82); border: 1px solid var(--line); border-radius: 28px; padding: 24px; box-shadow: 0 30px 90px rgba(15, 23, 42, 0.13); backdrop-filter: blur(12px); }
+    .mini-chat { display: grid; gap: 12px; }
+    .bubble { padding: 13px 15px; border-radius: 16px; line-height: 1.45; font-size: 14px; }
+    .bubble.ai { background: #eff6ff; color: #1e3a8a; border-bottom-left-radius: 4px; }
+    .bubble.user { background: #f8fafc; color: var(--ink); border: 1px solid #e2e8f0; border-bottom-right-radius: 4px; margin-left: 28px; }
+    .call-card { margin-top: 18px; border: 1px solid rgba(37,99,235,0.2); background: linear-gradient(135deg, #ffffff, #eff6ff); border-radius: 18px; padding: 16px; }
+    .call-card strong { display: block; margin-bottom: 8px; }
+    .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding-bottom: 76px; }
+    .step { background: rgba(255,255,255,0.75); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+    .step b { display: block; margin-bottom: 8px; }
+    .step span { color: var(--muted); line-height: 1.45; font-size: 14px; }
+    .note { color: #64748b; font-size: 13px; margin-top: 20px; }
+    @media (max-width: 860px) { .hero { grid-template-columns: 1fr; padding-top: 44px; } .steps { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 560px) { .steps { grid-template-columns: 1fr; } header { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body data-ai-solo-voice-chatbot-demo>
+  <header>
+    <div class="brand">AI Solo Company</div>
+    <div class="badge">Chatbot + browser voice call demo</div>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="heroTitle">
+      <div>
+        <h1 id="heroTitle">Talk to the AI Solo Company assistant.</h1>
+        <p class="lead">
+          Ask by chat, speak a short question, or start a voice call from the same chatbot interface.
+          The assistant can explain AI automation services, capture follow-up context, and hand off call summaries to operator review.
+        </p>
+        <div class="cta-row">
+          <button class="button primary" type="button" data-easiio-chatbot-open>💬 Open chatbot</button>
+          <button class="button secondary" type="button" data-easiio-chatbot-start-voice-call>🎙 Start voice call</button>
+        </div>
+        <p class="note">Browser voice calls require microphone permission. The demo is review-first and does not expose admin controls or provider credentials.</p>
+      </div>
+      <aside class="panel" aria-label="Chatbot voice call preview">
+        <div class="mini-chat">
+          <div class="bubble ai">Hi, I can answer website questions or start a voice call.</div>
+          <div class="bubble user">Can I talk through my automation idea?</div>
+          <div class="bubble ai">Yes — click <strong>Start voice call</strong> inside the chatbot, then record one short turn at a time.</div>
+        </div>
+        <div class="call-card">
+          <strong>Voice call flow</strong>
+          Chatbot button → call session → microphone turn → AI reply → CRM/review handoff.
+        </div>
+      </aside>
+    </section>
+
+    <section class="steps" aria-label="Workflow">
+      <div class="step"><b>1. Visitor opens chat</b><span>The AI Solo Company site loads the Easiio chatbot widget.</span></div>
+      <div class="step"><b>2. Visitor starts call</b><span>The visitor clicks the chatbot voice-call button and grants mic permission.</span></div>
+      <div class="step"><b>3. AI answers</b><span>The voice backend transcribes, answers, and can play the response back.</span></div>
+      <div class="step"><b>4. Operator reviews</b><span>Call summary, lead context, and follow-up actions stay review-first.</span></div>
+    </section>
+  </main>
+
+  <script
+    src="./widget.js?v=20260531-width-rag-fix"
+    data-easiio-chatbot
+    data-site-id="ai-solo-company"
+    data-organization-name="Easiio"
+    data-website-name="AI Solo Company"
+    data-api-base="https://hermesproxy.easiiodev.ai/p/VaYZmN7v5naw-chatbot-api"
+    data-position="bottom-right"
+    data-title="AI Solo Company Assistant"
+    data-primary-color="#2563eb"
+    data-launcher-style="bubble"
+    data-launcher-size="medium"
+    data-auto-open="false"
+    data-remote-widget-config="false"
+    data-lead-forms-enabled="false"
+    data-voice-enabled="true"
+    data-voice-label="Listen"
+    data-voice-input-enabled="true"
+    data-voice-input-label="Speak"
+    data-voice-input-language="auto"
+    data-voice-call-enabled="true"
+    data-voice-call-api-base="https://hermesproxy.easiiodev.ai/p/VaYZmN7v5naw-voice-api"
+    data-voice-call-label="Start voice call"
+    data-voice-call-consent-text="Click start to begin a browser voice call. Your microphone audio is used only to answer this demo turn and prepare review-first follow-up context."
+    data-greeting="Hi — ask me by chat, speech, or start a voice call.">
+  </script>
+</body>
+</html>

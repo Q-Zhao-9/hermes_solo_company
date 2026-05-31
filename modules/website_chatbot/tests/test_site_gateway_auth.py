@@ -11,8 +11,7 @@ import unittest
 from http.cookies import SimpleCookie
 from pathlib import Path
 
-MODULE_ROOT = Path(__file__).resolve().parents[1]
-GATEWAY_PATH = MODULE_ROOT / 'backend' / 'site_gateway.py'
+GATEWAY_PATH = Path(__file__).resolve().parents[1] / 'backend' / 'site_gateway.py'
 spec = importlib.util.spec_from_file_location('site_gateway', GATEWAY_PATH)
 site_gateway = importlib.util.module_from_spec(spec)
 assert spec and spec.loader

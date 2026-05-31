@@ -41,7 +41,14 @@
     leadPromptTimer: null,
     lastLeadPromptReason: '',
     hasUnread: true,
-    leadFormConfig: null
+    leadFormConfig: null,
+    currentAudio: null,
+    recognition: null,
+    isListening: false,
+    voiceCallId: null,
+    voiceCallRecorder: null,
+    voiceCallChunks: [],
+    voiceCallStream: null
   };
 
   function getConfig() {
@@ -63,6 +70,19 @@
       trackPageViews: ds.trackPageViews !== 'false',
       autoOpenDelaySeconds: Number(ds.autoOpenDelaySeconds || 0),
       leadFormsEnabled: ds.leadFormsEnabled === 'true',
+      voiceEnabled: ds.voiceEnabled === 'true',
+      voiceAutoplay: ds.voiceAutoplay === 'true',
+      voiceLabel: ds.voiceLabel || 'Listen',
+      voice: ds.voice || '',
+      voiceFormat: ds.voiceFormat || 'mp3',
+      voiceInputEnabled: ds.voiceInputEnabled === 'true',
+      voiceInputLabel: ds.voiceInputLabel || 'Speak',
+      voiceInputLanguage: ds.voiceInputLanguage || 'auto',
+      voiceCallEnabled: ds.voiceCallEnabled === 'true',
+      voiceCallLabel: ds.voiceCallLabel || 'Call AI Assistant',
+      voiceCallApiBase: ds.voiceCallApiBase || '',
+      voiceCallConsentText: ds.voiceCallConsentText || 'This AI assistant may transcribe your voice to answer your question and follow up if you share contact details.',
+      remoteWidgetConfigEnabled: ds.remoteWidgetConfig !== 'false',
       ragAdminEnabled: ds.ragAdmin === 'true' || ds.ragAdminEnabled === 'true',
       // Reads embedded JSON from the script attribute data-lead-form-config.
       leadFormConfig: parseEmbeddedLeadFormConfig(ds.leadFormConfig),
@@ -78,6 +98,9 @@
     if (partial && partial.leadFormConfig) {
       state.leadFormConfig = normalizeLeadFormConfig(partial.leadFormConfig);
       renderLeadFormFields();
+    }
+    if (partial && Object.prototype.hasOwnProperty.call(partial, 'voiceInputEnabled')) {
+      refreshVoiceInputControl();
     }
     applyTheme();
     return state.config;
@@ -246,6 +269,9 @@
     const quickActions = document.createElement('div');
     quickActions.className = 'easiio-chatbot-quick-actions';
     quickActions.appendChild(quickButton('Chat', open));
+    if (state.config.voiceCallEnabled) {
+      quickActions.appendChild(quickButton(state.config.voiceCallLabel || 'Call AI Assistant', startVoiceCallSession));
+    }
     if (state.config.email) {
       quickActions.appendChild(quickLink('Email', `mailto:${state.config.email}`));
     }
@@ -317,8 +343,10 @@
           <button type="button" data-message="I want to book a demo">Book demo</button>
           <button type="button" data-message="Can you tell me about pricing?">Pricing</button>
           <button type="button" data-message="I want to contact sales">Contact sales</button>
+          ${state.config.voiceCallEnabled ? renderVoiceCallControl() : ''}
           ${state.config.ragAdminEnabled ? '<button type="button" class="easiio-chatbot-rag-open">Knowledge</button>' : ''}
         </div>
+        ${state.config.voiceCallEnabled ? voiceCallMarkup() : ''}
         ${state.config.ragAdminEnabled ? ragAdminMarkup() : ''}
         <form id="easiio-chatbot-lead-form" class="easiio-chatbot-lead-form" hidden>
           ${leadFormMarkup()}
@@ -326,6 +354,7 @@
         <div class="easiio-chatbot-consent">${escapeHtml(state.config.consentText)}</div>
       </main>
       <form class="easiio-chatbot-composer">
+        ${renderVoiceInputControl()}
         <input class="easiio-chatbot-input" placeholder="Ask about AI agents, automation, demos..." maxlength="2000" />
         <button type="submit">Send</button>
       </form>
@@ -334,6 +363,9 @@
     panel.querySelector('.easiio-chatbot-minimize').addEventListener('click', minimize);
     panel.querySelector('.easiio-chatbot-close').addEventListener('click', close);
     panel.querySelector('.easiio-chatbot-composer').addEventListener('submit', onSubmitMessage);
+    const voiceInputButton = panel.querySelector('[data-voice-input]');
+    if (voiceInputButton) voiceInputButton.addEventListener('click', startVoiceInput);
+    panel.addEventListener('click', onPanelClick);
     panel.querySelector('#easiio-chatbot-lead-form').addEventListener('submit', onSubmitLead);
     panel.querySelector('.easiio-chatbot-lead-dismiss').addEventListener('click', dismissLeadForm);
     if (state.config.ragAdminEnabled) {
@@ -346,13 +378,288 @@
       loadRagContentList();
     }
     panel.querySelectorAll('.easiio-chatbot-actions button').forEach(button => {
-      button.addEventListener('click', () => onQuickAction(button.dataset.message));
+      if (button.dataset.message) {
+        button.addEventListener('click', () => onQuickAction(button.dataset.message));
+      }
     });
 
     state.messages = panel.querySelector('.easiio-chatbot-messages');
     state.input = panel.querySelector('.easiio-chatbot-input');
     prefillLeadForm(panel);
     return panel;
+  }
+
+  function onPanelClick(event) {
+    const target = event.target && event.target.closest && event.target.closest('button');
+    if (!target) return;
+    if (target.matches('[data-voice-call-start]')) {
+      event.preventDefault();
+      startVoiceCallSession();
+      return;
+    }
+    if (target.matches('[data-voice-call-record]')) {
+      event.preventDefault();
+      startVoiceCallRecording();
+      return;
+    }
+    if (target.matches('[data-voice-call-end]')) {
+      event.preventDefault();
+      endVoiceCallSession();
+    }
+  }
+
+  function attachDocumentShortcuts() {
+    document.addEventListener('click', event => {
+      const target = event.target && event.target.closest && event.target.closest('[data-easiio-chatbot-open], [data-easiio-chatbot-start-voice-call]');
+      if (!target) return;
+      event.preventDefault();
+      if (target.matches('[data-easiio-chatbot-start-voice-call]')) {
+        startVoiceCallSession();
+      } else {
+        open();
+      }
+    });
+  }
+
+  function renderVoiceInputControl() {
+    if (!state.config.voiceInputEnabled) return '';
+    const label = escapeHtml(state.config.voiceInputLabel || 'Speak');
+    return `<button type="button" class="easiio-chatbot-voice-input" data-voice-input aria-label="${label}" title="${label}">🎙 <span>${label}</span></button>`;
+  }
+  function renderVoiceCallControl() {
+    const label = escapeHtml(state.config.voiceCallLabel || 'Call AI Assistant');
+    return `<button type="button" class="easiio-chatbot-voice-call-trigger" data-voice-call-start>${label}</button>`;
+  }
+
+  function voiceCallMarkup() {
+    return `
+      <section class="easiio-chatbot-voice-call-panel" data-voice-call-panel hidden>
+        <div class="easiio-chatbot-voice-call">
+          <strong>${escapeHtml(state.config.voiceCallLabel || 'Call AI Assistant')}</strong>
+          <p>${escapeHtml(state.config.voiceCallConsentText || '')}</p>
+          <div class="easiio-chatbot-voice-call-actions">
+            <button type="button" data-voice-call-record disabled>Record turn</button>
+            <button type="button" data-voice-call-end disabled>End call</button>
+          </div>
+          <div class="easiio-chatbot-voice-call-status" data-voice-call-status>Start the call, then record one short question at a time.</div>
+        </div>
+      </section>`;
+  }
+
+  function setVoiceCallStatus(message) {
+    const status = state.panel && state.panel.querySelector('[data-voice-call-status]');
+    if (status) status.textContent = message || '';
+  }
+
+  function voiceCallApiUrl(path) {
+    const base = (state.config.voiceCallApiBase || state.config.apiBase || '').replace(/\/$/, '');
+    const cleanPath = String(path || '');
+    if (/^https?:\/\//i.test(cleanPath)) return cleanPath;
+    return `${base}${cleanPath.charAt(0) === '/' ? cleanPath : '/' + cleanPath}`;
+  }
+
+  async function postVoiceCallJSON(path, payload) {
+    const response = await fetch(voiceCallApiUrl(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {})
+    });
+    if (!response.ok) throw new Error(`Voice call API failed: ${response.status}`);
+    return response.json();
+  }
+
+  async function startVoiceCallSession() {
+    if (!state.config.voiceCallEnabled) return;
+    open();
+    const panel = state.panel && state.panel.querySelector('[data-voice-call-panel]');
+    if (panel) panel.hidden = false;
+    setVoiceCallStatus('Starting voice call…');
+    try {
+      const response = await postVoiceCallJSON('/api/voice-call/session', basePayload({
+        channel: 'website_widget',
+        session_id: state.sessionId,
+        caller: state.visitor,
+        page_context: getPageContext()
+      }));
+      state.voiceCallId = response.call && response.call.call_id;
+      const record = state.panel.querySelector('[data-voice-call-record]');
+      const end = state.panel.querySelector('[data-voice-call-end]');
+      if (record) record.disabled = !state.voiceCallId;
+      if (end) end.disabled = !state.voiceCallId;
+      setVoiceCallStatus(state.voiceCallId ? 'Call ready. Click Record turn and ask one question.' : 'Could not start voice call.');
+    } catch (_error) {
+      setVoiceCallStatus('Voice call service is unavailable. Please use text chat.');
+    }
+  }
+
+  async function startVoiceCallRecording() {
+    if (!state.voiceCallId) return startVoiceCallSession();
+    if (state.voiceCallRecorder && state.voiceCallRecorder.state === 'recording') {
+      stopVoiceCallRecording();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setVoiceCallStatus('Browser microphone recording is not supported.');
+      return;
+    }
+    try {
+      state.voiceCallStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      state.voiceCallChunks = [];
+      const recorder = new MediaRecorder(state.voiceCallStream);
+      state.voiceCallRecorder = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size) state.voiceCallChunks.push(event.data);
+      };
+      recorder.onstop = submitVoiceCallAudioTurn;
+      recorder.start();
+      const button = state.panel.querySelector('[data-voice-call-record]');
+      if (button) button.textContent = 'Stop recording';
+      setVoiceCallStatus('Recording… click Stop when done.');
+    } catch (_error) {
+      setVoiceCallStatus('Microphone permission was not granted.');
+    }
+  }
+
+  function stopVoiceCallRecording() {
+    if (state.voiceCallRecorder && state.voiceCallRecorder.state === 'recording') {
+      state.voiceCallRecorder.stop();
+    }
+    if (state.voiceCallStream) {
+      state.voiceCallStream.getTracks().forEach(track => track.stop());
+      state.voiceCallStream = null;
+    }
+    const button = state.panel && state.panel.querySelector('[data-voice-call-record]');
+    if (button) button.textContent = 'Record turn';
+  }
+
+  async function submitVoiceCallAudioTurn() {
+    if (!state.voiceCallId || !state.voiceCallChunks.length) return;
+    setVoiceCallStatus('Transcribing and answering…');
+    const blob = new Blob(state.voiceCallChunks, { type: 'audio/webm' });
+    const form = new FormData();
+    form.append('call_id', state.voiceCallId);
+    form.append('site_id', state.config.siteId || 'default');
+    form.append('session_id', state.sessionId || '');
+    form.append('visitor_key', getVisitorKey());
+    form.append('page_context', JSON.stringify(getPageContext()));
+    form.append('audio_file', blob, 'voice-turn.webm');
+    try {
+      const response = await fetch(voiceCallApiUrl('/api/voice-call/browser/audio-turn'), { method: 'POST', body: form });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.error || 'voice call turn failed');
+      if (data.transcript) addMessage('user', data.transcript);
+      const botNode = addMessage('bot', data.reply || 'I processed your voice turn.');
+      if (data.audio_url) {
+        const audio = new Audio(voiceCallApiUrl(data.audio_url));
+        audio.play().catch(() => {});
+      }
+      renderAnswerFeedback(botNode, data.transcript || '', data);
+      setVoiceCallStatus('Ready for the next voice turn.');
+    } catch (_error) {
+      setVoiceCallStatus('Could not process that voice turn. Please try again or use text chat.');
+    } finally {
+      state.voiceCallChunks = [];
+    }
+  }
+
+  async function endVoiceCallSession() {
+    if (!state.voiceCallId) return;
+    stopVoiceCallRecording();
+    try {
+      await postVoiceCallJSON('/api/voice-call/end', { call_id: state.voiceCallId, summary: 'Ended from website widget' });
+    } catch (_error) {
+      // Keep UI cleanup local even if the service is unavailable.
+    }
+    state.voiceCallId = null;
+    const record = state.panel && state.panel.querySelector('[data-voice-call-record]');
+    const end = state.panel && state.panel.querySelector('[data-voice-call-end]');
+    if (record) record.disabled = true;
+    if (end) end.disabled = true;
+    setVoiceCallStatus('Voice call ended.');
+  }
+
+
+  function refreshVoiceInputControl() {
+    if (!state.panel) return;
+    const composer = state.panel.querySelector('.easiio-chatbot-composer');
+    if (!composer) return;
+    const existing = composer.querySelector('[data-voice-input]');
+    if (!state.config.voiceInputEnabled) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      const label = state.config.voiceInputLabel || 'Speak';
+      existing.setAttribute('aria-label', label);
+      existing.setAttribute('title', label);
+      const span = existing.querySelector('span');
+      if (span && !state.isListening) span.textContent = label;
+      return;
+    }
+    composer.insertAdjacentHTML('afterbegin', renderVoiceInputControl());
+    const button = composer.querySelector('[data-voice-input]');
+    if (button) button.addEventListener('click', startVoiceInput);
+  }
+
+  function getSpeechRecognitionConstructor() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  function updateVoiceInputStatus(button, message, listening) {
+    if (!button) return;
+    button.classList.toggle('is-listening', Boolean(listening));
+    button.disabled = Boolean(listening);
+    button.setAttribute('aria-pressed', listening ? 'true' : 'false');
+    const span = button.querySelector('span');
+    if (span) span.textContent = message || state.config.voiceInputLabel || 'Speak';
+  }
+
+  function startVoiceInput(event) {
+    const button = event && event.currentTarget ? event.currentTarget : state.panel && state.panel.querySelector('[data-voice-input]');
+    const SpeechRecognition = getSpeechRecognitionConstructor();
+    if (!SpeechRecognition) {
+      addMessage('bot', 'Voice input is not supported in this browser yet. Please type your question instead.');
+      return;
+    }
+    try {
+      if (state.recognition && state.isListening) {
+        state.recognition.stop();
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      state.recognition = recognition;
+      recognition.lang = state.config.voiceInputLanguage && state.config.voiceInputLanguage !== 'auto'
+        ? state.config.voiceInputLanguage
+        : (document.documentElement.lang || navigator.language || 'en-US');
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onstart = () => {
+        state.isListening = true;
+        updateVoiceInputStatus(button, 'Listening…', true);
+      };
+      recognition.onend = () => {
+        state.isListening = false;
+        updateVoiceInputStatus(button, state.config.voiceInputLabel || 'Speak', false);
+      };
+      recognition.onerror = () => {
+        state.isListening = false;
+        updateVoiceInputStatus(button, state.config.voiceInputLabel || 'Speak', false);
+        addMessage('bot', 'I could not hear that clearly. Please try again or type your question.');
+      };
+      recognition.onresult = (resultEvent) => {
+        const transcript = resultEvent && resultEvent.results && resultEvent.results[0] && resultEvent.results[0][0]
+          ? String(resultEvent.results[0][0].transcript || '').trim()
+          : '';
+        if (!transcript) return;
+        state.input.value = transcript;
+        state.input.focus();
+        state.panel.querySelector('.easiio-chatbot-composer').requestSubmit();
+      };
+      recognition.start();
+    } catch (_error) {
+      updateVoiceInputStatus(button, state.config.voiceInputLabel || 'Speak', false);
+      addMessage('bot', 'Voice input could not start. Please type your question instead.');
+    }
   }
 
   function leadFormMarkup() {
@@ -527,7 +834,9 @@
     callChatApi(text)
       .then(response => {
         setTyping(false);
-        addMessage('bot', response.reply || 'Thanks — I saved your message.');
+        const botNode = addMessage('bot', response.reply || 'Thanks — I saved your message.');
+        renderAnswerFeedback(botNode, text, response);
+        renderVoicePlayback(botNode, response.reply || '', response);
         const shouldPromptForLead = state.config.leadFormsEnabled && !hasContactInfo() && response.show_lead_form;
         if (shouldPromptForLead) {
           showLeadForm(text, 'intent');
@@ -560,6 +869,99 @@
     state.messages.appendChild(message);
     if (!options || !options.skipCache) saveCachedMessage(role, text);
     scrollMessages();
+    return message;
+  }
+
+  function renderVoicePlayback(messageNode, text, response) {
+    if (!messageNode || !state.config.voiceEnabled || !text || state.config.apiBase === 'mock') return;
+    const voice = document.createElement('div');
+    voice.className = 'easiio-chatbot-voice';
+    voice.innerHTML = `
+      <button type="button" data-voice-playback aria-label="Play voice response">🔊 ${escapeHtml(state.config.voiceLabel || 'Listen')}</button>
+      <span class="easiio-chatbot-voice-status" aria-live="polite"></span>`;
+    const button = voice.querySelector('[data-voice-playback]');
+    const status = voice.querySelector('.easiio-chatbot-voice-status');
+    const play = async () => {
+      button.disabled = true;
+      status.textContent = 'Preparing audio…';
+      try {
+        const audioData = await requestVoiceAudio(text, response || {});
+        const audioUrl = resolveApiUrl(audioData.audio_url || audioData.audioUrl || '');
+        if (!audioUrl) throw new Error('Missing audio URL');
+        if (state.currentAudio && typeof state.currentAudio.pause === 'function') state.currentAudio.pause();
+        const audio = new Audio(audioUrl);
+        state.currentAudio = audio;
+        audio.addEventListener('ended', () => {
+          status.textContent = 'Finished';
+          button.disabled = false;
+        }, { once: true });
+        audio.addEventListener('error', () => {
+          status.textContent = 'Audio unavailable';
+          button.disabled = false;
+        }, { once: true });
+        status.textContent = 'Playing…';
+        await audio.play();
+      } catch (_error) {
+        status.textContent = 'Audio unavailable';
+        button.disabled = false;
+      }
+    };
+    button.addEventListener('click', play);
+    messageNode.appendChild(voice);
+    if (state.config.voiceAutoplay) {
+      setTimeout(play, 150);
+    }
+  }
+
+  async function requestVoiceAudio(text, response) {
+    return postJSON('/api/chat/voice', basePayload({
+      session_id: state.sessionId,
+      text,
+      voice: state.config.voice,
+      format: state.config.voiceFormat,
+      answer_source: response.answer_source || '',
+      answer_log_id: response.answer_log_id || ''
+    }));
+  }
+
+  function renderAnswerFeedback(messageNode, question, response) {
+    if (!messageNode || !response || !String(response.answer_source || '').startsWith('website_rag')) return;
+    const feedback = document.createElement('div');
+    feedback.className = 'easiio-chatbot-feedback';
+    feedback.innerHTML = `
+      <span>Was this helpful?</span>
+      <button type="button" data-rag-feedback="helpful" aria-label="Helpful answer">👍</button>
+      <button type="button" data-rag-feedback="not_helpful" aria-label="Not helpful answer">👎</button>`;
+    feedback.querySelectorAll('[data-rag-feedback]').forEach(button => {
+      button.addEventListener('click', async (event) => {
+        const target = event.currentTarget;
+        target.disabled = true;
+        await sendAnswerFeedback({
+          question,
+          answer: response.reply || '',
+          answer_log_id: response.answer_log_id || '',
+          rating: target.dataset.ragFeedback,
+          answer_source: response.answer_source || '',
+          confidence: response.confidence || ''
+        });
+        feedback.querySelector('span').textContent = 'Thanks for the feedback.';
+      });
+    });
+    messageNode.appendChild(feedback);
+  }
+
+  async function sendAnswerFeedback(payload) {
+    if (state.config.apiBase === 'mock') return { ok: true };
+    return postJSON('/api/rag/feedback', basePayload(payload));
+  }
+
+  function resolveApiUrl(path) {
+    const value = String(path || '');
+    if (!value) return '';
+    if (/^https?:\/\//i.test(value)) return value;
+    const base = state.config.apiBase.replace(/\/$/, '');
+    if (value.charAt(0) === '/') return `${base}${value}`;
+    return `${base}/${value}`;
   }
 
   function scrollMessages() {
@@ -589,6 +991,24 @@
     });
   }
 
+  function applyRemoteWidgetConfig(widgetConfig) {
+    if (!widgetConfig || typeof widgetConfig !== 'object') return;
+    const partial = {};
+    if ('voice_enabled' in widgetConfig || 'voiceEnabled' in widgetConfig) partial.voiceEnabled = widgetConfig.voice_enabled === true || widgetConfig.voiceEnabled === true;
+    if ('voice_autoplay' in widgetConfig || 'voiceAutoplay' in widgetConfig) partial.voiceAutoplay = widgetConfig.voice_autoplay === true || widgetConfig.voiceAutoplay === true;
+    if (widgetConfig.voice_label || widgetConfig.voiceLabel) partial.voiceLabel = String(widgetConfig.voice_label || widgetConfig.voiceLabel).slice(0, 80);
+    if (widgetConfig.voice || widgetConfig.voice === '') partial.voice = String(widgetConfig.voice || '').slice(0, 80);
+    if (widgetConfig.voice_format || widgetConfig.voiceFormat) partial.voiceFormat = String(widgetConfig.voice_format || widgetConfig.voiceFormat || 'mp3').slice(0, 20);
+    if ('voice_input_enabled' in widgetConfig || 'voiceInputEnabled' in widgetConfig) partial.voiceInputEnabled = widgetConfig.voice_input_enabled === true || widgetConfig.voiceInputEnabled === true;
+    if (widgetConfig.voice_input_label || widgetConfig.voiceInputLabel) partial.voiceInputLabel = String(widgetConfig.voice_input_label || widgetConfig.voiceInputLabel).slice(0, 80);
+    if (widgetConfig.voice_input_language || widgetConfig.voiceInputLanguage) partial.voiceInputLanguage = String(widgetConfig.voice_input_language || widgetConfig.voiceInputLanguage || 'auto').slice(0, 32);
+    if ('voice_call_enabled' in widgetConfig || 'voiceCallEnabled' in widgetConfig) partial.voiceCallEnabled = widgetConfig.voice_call_enabled === true || widgetConfig.voiceCallEnabled === true;
+    if (widgetConfig.voice_call_label || widgetConfig.voiceCallLabel) partial.voiceCallLabel = String(widgetConfig.voice_call_label || widgetConfig.voiceCallLabel).slice(0, 80);
+    if (widgetConfig.voice_call_api_base || widgetConfig.voiceCallApiBase) partial.voiceCallApiBase = String(widgetConfig.voice_call_api_base || widgetConfig.voiceCallApiBase || '').slice(0, 500);
+    if (widgetConfig.voice_call_consent_text || widgetConfig.voiceCallConsentText) partial.voiceCallConsentText = String(widgetConfig.voice_call_consent_text || widgetConfig.voiceCallConsentText || '').slice(0, 240);
+    updateConfig(partial);
+  }
+
   async function loadLeadFormConfig() {
     if (state.config.leadFormConfig) {
       state.leadFormConfig = normalizeLeadFormConfig(state.config.leadFormConfig);
@@ -599,6 +1019,7 @@
     try {
       const data = await getJSON(`/api/chat/form-config?site_id=${encodeURIComponent(state.config.siteId || 'default')}`);
       if (data && data.form_config) {
+        if (state.config.remoteWidgetConfigEnabled && data.form_config.widget_config) applyRemoteWidgetConfig(data.form_config.widget_config);
         state.leadFormConfig = normalizeLeadFormConfig(data.form_config);
         renderLeadFormFields();
       }
@@ -679,7 +1100,7 @@
   }
 
   async function getJSON(path) {
-    const response = await fetch(`${state.config.apiBase.replace(/\/$/, '')}${path}`, {
+    const response = await fetch(resolveApiUrl(path), {
       method: 'GET',
       headers: { 'Accept': 'application/json' }
     });
@@ -688,7 +1109,7 @@
   }
 
   async function postJSON(path, payload) {
-    const response = await fetch(`${state.config.apiBase.replace(/\/$/, '')}${path}`, {
+    const response = await fetch(resolveApiUrl(path), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -783,7 +1204,8 @@
     clearLeadFormReminder();
     form.hidden = true;
     if (state.config.apiBase === 'mock') {
-      addMessage('bot', `Thanks ${data.name || 'there'} — I saved your contact details in mock mode. Next step will write this into Solo CRM.`);
+      const reply = `Thanks ${data.name || 'there'} — I saved your contact details in mock mode. Next step will write this into Solo CRM.`;
+      addMessage('bot', reply);
       return;
     }
     setTyping(true);
@@ -795,7 +1217,8 @@
       }))))
       .then(response => {
         setTyping(false);
-        addMessage('bot', response.reply || `Thanks ${data.name || 'there'} — I saved your contact details.`);
+        const botNode = addMessage('bot', response.reply || `Thanks ${data.name || 'there'} — I saved your contact details.`);
+        renderVoicePlayback(botNode, response.reply || '', response);
       })
       .catch(() => {
         setTyping(false);
@@ -823,7 +1246,8 @@
     const main = document.querySelector('main') || document.body;
     const clone = main.cloneNode(true);
     clone.querySelectorAll('script, style, noscript, svg, form, input, button, select, textarea, #easiio-chatbot-root').forEach(node => node.remove());
-    return clone.innerText.replace(/\s+/g, ' ').trim().slice(0, 50000);
+    const text = clone.innerText || clone.textContent || '';
+    return text.replace(/\s+/g, ' ').trim().slice(0, 50000);
   }
 
   function escapeHtml(value) {
@@ -845,6 +1269,7 @@
     set: updateConfig,
     show,
     open,
+    startVoiceCall: startVoiceCallSession,
     close,
     minimize,
     openKnowledge,
@@ -853,6 +1278,8 @@
     getConfig: () => Object.assign({}, state.config),
     _state: state
   };
+
+  attachDocumentShortcuts();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', mount);

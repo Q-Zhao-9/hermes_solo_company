@@ -1,6 +1,6 @@
 # Easiio Module Installation
 
-This repository includes source-only reusable Easiio modules under `modules/`.
+This repository includes source-only reusable Easiio modules under `modules/` and Easiio-specific Hermes skills under `skills/`.
 
 ## Quick install
 
@@ -14,6 +14,8 @@ This installs:
 modules/solo_crm            -> ~/.hermes/tools/solo_crm
 modules/website_chatbot     -> ~/.hermes/tools/website_chatbot
 modules/easiio_docs_module  -> ~/.hermes/tools/easiio_docs_module
+skills/class4/...           -> ~/.hermes/skills/class4/...
+skills/web-development/...  -> ~/.hermes/skills/web-development/...
 ```
 
 ## Recommended student workflow
@@ -26,6 +28,18 @@ scripts/install_easiio_modules.sh
 ```
 
 Then restart Hermes if it is already running.
+
+Install only the reusable skills, for example:
+
+```bash
+scripts/install_easiio_modules.sh --module website_chatbot --skill class4/student-lead-followup
+```
+
+Skip skills if you only need module source:
+
+```bash
+scripts/install_easiio_modules.sh --no-skills
+```
 
 ## What is not installed from Git
 

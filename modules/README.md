@@ -11,7 +11,7 @@ modules/
   easiio_docs_module/    Reusable docs / knowledge-base / RAG module with frontend, backend, Sitelet, WordPress, and export adapters
 ```
 
-## Install into local Hermes tools
+## Install into local Hermes tools and skills
 
 From the repository root:
 
@@ -19,11 +19,14 @@ From the repository root:
 scripts/install_easiio_modules.sh
 ```
 
-Default install target:
+Default install targets:
 
 ```text
 ${HERMES_HOME:-$HOME/.hermes}/tools
+${HERMES_HOME:-$HOME/.hermes}/skills
 ```
+
+The installer copies both reusable tools under `modules/` and Easiio-specific skills under `skills/`, including the Class 4 Skill Studio skills.
 
 Dry run first:
 
@@ -37,10 +40,22 @@ Install only one module:
 scripts/install_easiio_modules.sh --module website_chatbot
 ```
 
-Install to a custom target directory:
+Install only one skill:
 
 ```bash
-scripts/install_easiio_modules.sh --target /path/to/hermes/tools
+scripts/install_easiio_modules.sh --skill class4/student-lead-followup
+```
+
+Install modules only, without skills:
+
+```bash
+scripts/install_easiio_modules.sh --no-skills
+```
+
+Install to custom target directories:
+
+```bash
+scripts/install_easiio_modules.sh --target /path/to/hermes/tools --skills-target /path/to/hermes/skills
 ```
 
 ## Safety rules

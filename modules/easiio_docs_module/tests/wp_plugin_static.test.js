@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '..');
 const pluginDir = path.join(root, 'wordpress-plugin', 'easiio-docs');
 const pluginFile = path.join(pluginDir, 'easiio-docs.php');
 const readmeFile = path.join(pluginDir, 'README.md');
+const packageFile = path.join(root, 'dist', 'easiio-docs-wordpress-plugin.zip');
 const appPath = path.join(root, 'backend', 'app.py');
 const wpPath = path.join(root, 'backend', 'docs_wordpress.py');
 
@@ -72,7 +73,9 @@ test('backend has WordPress draft-plan and execution helpers', () => {
   }
 });
 
-test('plugin source is package-ready without committing generated zip artifacts', () => {
-  assert.ok(fs.existsSync(pluginFile), 'easiio-docs.php should exist for packaging');
-  assert.ok(fs.existsSync(readmeFile), 'plugin README.md should exist for packaging');
+test('plugin source package is ready to zip without generated artifacts committed', () => {
+  assert.ok(fs.existsSync(pluginDir), 'plugin source directory should exist');
+  assert.ok(fs.existsSync(pluginFile), 'plugin PHP source should exist');
+  assert.ok(!fs.existsSync(packageFile), 'generated plugin zip should stay out of the source repo');
+  assert.ok(fs.statSync(pluginFile).size > 500, 'plugin PHP source should not be empty');
 });
