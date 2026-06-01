@@ -18,6 +18,14 @@ function setSessionHeader(headers: Headers, token: string): void {
   }
 }
 
+function withSelectedProfile(url: string): string {
+  if (!url.startsWith("/api/") || url.startsWith("/api/profiles")) return url;
+  const profile = window.localStorage?.getItem("hermes.dashboard.profile")?.trim();
+  if (!profile) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}profile=${encodeURIComponent(profile)}`;
+}
+
 export async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   // Inject the session token into all /api/ requests.
   const headers = new Headers(init?.headers);
@@ -25,7 +33,7 @@ export async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> 
   if (token) {
     setSessionHeader(headers, token);
   }
-  const res = await fetch(`${BASE}${url}`, { ...init, headers });
+  const res = await fetch(`${BASE}${withSelectedProfile(url)}`, { ...init, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`${res.status}: ${text}`);

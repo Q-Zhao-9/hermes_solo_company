@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Routes, Route, NavLink, Navigate } from "react-router-dom";
 import {
   Activity,
@@ -39,6 +39,8 @@ import PortalPage from "@/pages/PortalPage";
 import AgencyDocsPage from "@/pages/AgencyDocsPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { api } from "@/lib/api";
+import type { ProfileInfo } from "@/lib/api";
 import { useI18n } from "@/i18n";
 import { PluginSlot, usePlugins } from "@/plugins";
 import type { RegisteredPlugin } from "@/plugins";
@@ -213,6 +215,38 @@ export default function App() {
   const { t } = useI18n();
   const { plugins } = usePlugins();
   const { theme } = useTheme();
+  const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState(
+    () => window.localStorage.getItem("hermes.dashboard.profile") || "",
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getProfiles()
+      .then((resp) => {
+        if (cancelled) return;
+        setProfiles(resp.profiles);
+        const available = new Set(resp.profiles.map((p) => p.name));
+        const stored = window.localStorage.getItem("hermes.dashboard.profile") || "";
+        const fallback = resp.active || resp.profiles[0]?.name || "default";
+        const next = stored && available.has(stored) ? stored : fallback;
+        if (next) {
+          window.localStorage.setItem("hermes.dashboard.profile", next);
+          setSelectedProfile(next);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const changeProfile = (profile: string) => {
+    window.localStorage.setItem("hermes.dashboard.profile", profile);
+    setSelectedProfile(profile);
+    window.dispatchEvent(new CustomEvent("hermes-dashboard-profile-change", { detail: profile }));
+  };
 
   const navItems = useMemo(
     () => buildNavItems(BUILTIN_NAV, plugins),
@@ -329,6 +363,24 @@ export default function App() {
           <Grid className="h-full shrink-0 !border-t-0 !border-b-0">
             <Cell className="flex items-center gap-2 !p-0 !px-2 sm:!px-4">
               <PluginSlot name="header-right" />
+              {profiles.length > 0 && (
+                <label className="flex items-center gap-1.5 text-[0.65rem] tracking-[0.12em] opacity-80">
+                  <Database className="h-3.5 w-3.5" />
+                  <span className="hidden md:inline">Profile</span>
+                  <select
+                    aria-label="Dashboard profile"
+                    value={selectedProfile}
+                    onChange={(event) => changeProfile(event.target.value)}
+                    className="max-w-[12rem] border border-current/30 bg-background-base px-2 py-1 font-mondwest text-[0.65rem] uppercase tracking-[0.12em] text-midground outline-none"
+                  >
+                    {profiles.map((profile) => (
+                      <option key={profile.name} value={profile.name}>
+                        {profile.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <ThemeSwitcher />
               <LanguageSwitcher />
               <Typography
@@ -382,7 +434,7 @@ export default function App() {
 
         <main className="min-w-0 flex-1">
           <PluginSlot name="pre-main" />
-          <Routes>
+          <Routes key={selectedProfile}>
             {routes.map(({ key, path, Component }) => (
               <Route key={key} path={path} element={<Component />} />
             ))}

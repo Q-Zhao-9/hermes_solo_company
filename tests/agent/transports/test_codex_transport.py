@@ -8,6 +8,20 @@ from agent.transports import get_transport
 from agent.transports.types import NormalizedResponse, ToolCall
 
 
+class _ResponseWithBrokenOutputText:
+    output = None
+    status = "completed"
+    incomplete_details = None
+    usage = SimpleNamespace(input_tokens=10, output_tokens=5,
+                            input_tokens_details=None, output_tokens_details=None)
+
+    @property
+    def output_text(self):
+        for output in self.output:
+            return output
+        return ""
+
+
 @pytest.fixture
 def transport():
     import agent.transports.codex  # noqa: F401
@@ -218,3 +232,9 @@ class TestCodexNormalizeResponse:
         tc = nr.tool_calls[0]
         assert tc.name == "terminal"
         assert '"command"' in tc.arguments
+
+    def test_broken_output_text_property_raises_runtime_error(self, transport):
+        """Malformed SDK response should stay a malformed-response error.
+        Accessing output_text must not leak the SDK property's TypeError."""
+        with pytest.raises(RuntimeError, match="no output items"):
+            transport.normalize_response(_ResponseWithBrokenOutputText())

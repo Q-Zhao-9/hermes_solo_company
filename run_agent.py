@@ -101,6 +101,7 @@ from agent.usage_pricing import estimate_usage_cost, normalize_usage
 from agent.codex_responses_adapter import (
     _derive_responses_function_call_id as _codex_derive_responses_function_call_id,
     _deterministic_call_id as _codex_deterministic_call_id,
+    _safe_get_response_output_text as _codex_safe_get_response_output_text,
     _split_responses_tool_id as _codex_split_responses_tool_id,
     _summarize_user_message_for_log,
 )
@@ -4779,6 +4780,25 @@ class AIAgent:
     def _close_request_openai_client(self, client: Any, *, reason: str) -> None:
         self._close_openai_client(client, reason=reason, shared=False)
 
+    @staticmethod
+    def _is_codex_none_output_iterable_error(exc: BaseException) -> bool:
+        return isinstance(exc, TypeError) and "'NoneType' object is not iterable" in str(exc)
+
+    def _codex_malformed_empty_response(self, api_kwargs: dict, *, reason: str):
+        logger.warning(
+            "Codex Responses SDK returned malformed empty response (%s); "
+            "deferring to retry/fallback handling. model=%s",
+            reason,
+            api_kwargs.get("model", "unknown"),
+        )
+        return SimpleNamespace(
+            output=[],
+            status="failed",
+            incomplete_details=SimpleNamespace(reason=reason),
+            usage=None,
+            model=api_kwargs.get("model"),
+        )
+
     def _run_codex_stream(self, api_kwargs: dict, client: Any = None, on_first_delta: callable = None):
         """Execute one streaming Responses API request and return the final response."""
         import httpx as _httpx
@@ -4901,6 +4921,33 @@ class AIAgent:
                     )
                     return self._run_codex_create_stream_fallback(api_kwargs, client=active_client)
                 raise
+            except TypeError as exc:
+                if not self._is_codex_none_output_iterable_error(exc):
+                    raise
+                if collected_output_items:
+                    return SimpleNamespace(
+                        output=list(collected_output_items),
+                        status="completed",
+                        usage=None,
+                        model=api_kwargs.get("model"),
+                    )
+                if self._codex_streamed_text_parts and not has_tool_calls:
+                    assembled = "".join(self._codex_streamed_text_parts)
+                    return SimpleNamespace(
+                        output=[SimpleNamespace(
+                            type="message",
+                            role="assistant",
+                            status="completed",
+                            content=[SimpleNamespace(type="output_text", text=assembled)],
+                        )],
+                        status="completed",
+                        usage=None,
+                        model=api_kwargs.get("model"),
+                    )
+                return self._codex_malformed_empty_response(
+                    api_kwargs,
+                    reason="sdk_output_none_iterable",
+                )
 
     def _run_codex_create_stream_fallback(self, api_kwargs: dict, client: Any = None):
         """Fallback path for stream completion edge cases on Codex-style Responses backends."""
@@ -4968,6 +5015,13 @@ class AIAgent:
                                 len(collected_text_deltas), len(assembled),
                             )
                     return terminal_response
+        except TypeError as exc:
+            if not self._is_codex_none_output_iterable_error(exc):
+                raise
+            return self._codex_malformed_empty_response(
+                api_kwargs,
+                reason="sdk_output_none_iterable_fallback",
+            )
         finally:
             close_fn = getattr(stream_or_response, "close", None)
             if callable(close_fn):
@@ -9436,7 +9490,7 @@ class AIAgent:
                             else:
                                 # output_text fallback: stream backfill may have failed
                                 # but normalize can still recover from output_text
-                                _out_text = getattr(response, "output_text", None)
+                                _out_text = _codex_safe_get_response_output_text(response)
                                 _out_text_stripped = _out_text.strip() if isinstance(_out_text, str) else ""
                                 if _out_text_stripped:
                                     logger.debug(
@@ -10736,7 +10790,10 @@ class AIAgent:
                                     self._vprint(f"{self.log_prefix}      • Check credits: https://openrouter.ai/settings/credits", force=True)
                         else:
                             self._vprint(f"{self.log_prefix}   💡 This type of error won't be fixed by retrying.", force=True)
-                        logging.error(f"{self.log_prefix}Non-retryable client error: {api_error}")
+                        logging.error(
+                            f"{self.log_prefix}Non-retryable client error: {api_error}",
+                            exc_info=True,
+                        )
                         # Skip session persistence when the error is likely
                         # context-overflow related (status 400 + large session).
                         # Persisting the failed user message would make the

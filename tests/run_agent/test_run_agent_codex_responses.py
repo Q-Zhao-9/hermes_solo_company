@@ -125,6 +125,19 @@ def _codex_incomplete_message_response(text: str):
     )
 
 
+class _CodexResponseWithBrokenOutputText:
+    output = None
+    usage = SimpleNamespace(input_tokens=5, output_tokens=3, total_tokens=8)
+    status = "completed"
+    model = "gpt-5-codex"
+
+    @property
+    def output_text(self):
+        for output in self.output:
+            return output
+        return ""
+
+
 def _codex_commentary_message_response(text: str):
     return SimpleNamespace(
         output=[
@@ -449,6 +462,28 @@ def test_run_codex_stream_falls_back_to_create_after_stream_completion_error(mon
     assert response.output[0].content[0].text == "create fallback ok"
 
 
+def test_run_codex_stream_treats_sdk_none_output_typeerror_as_malformed(monkeypatch):
+    agent = _build_agent(monkeypatch)
+
+    def _fake_stream(**kwargs):
+        return _FakeResponsesStream(
+            final_error=TypeError("'NoneType' object is not iterable")
+        )
+
+    agent.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            stream=_fake_stream,
+            create=lambda **kwargs: _codex_message_response("unused"),
+        )
+    )
+
+    response = agent._run_codex_stream(_codex_request_kwargs())
+
+    assert response.output == []
+    assert response.status == "failed"
+    assert response.incomplete_details.reason == "sdk_output_none_iterable"
+
+
 def test_run_codex_stream_fallback_parses_create_stream_events(monkeypatch):
     agent = _build_agent(monkeypatch)
     calls = {"stream": 0, "create": 0}
@@ -536,6 +571,28 @@ def test_run_conversation_codex_empty_output_no_output_text_retries(monkeypatch)
                 status="completed",
                 model="gpt-5-codex",
             )
+        return _codex_message_response("Recovered")
+
+    monkeypatch.setattr(agent, "_interruptible_api_call", _fake_api_call)
+
+    result = agent.run_conversation("Say hello")
+
+    assert calls["api"] >= 2
+    assert result["completed"] is True
+    assert result["final_response"] == "Recovered"
+
+
+def test_run_conversation_codex_none_output_broken_output_text_retries(monkeypatch):
+    """Regression: SDK response.output_text can raise TypeError when
+    response.output is None. That should be treated as malformed response
+    and retried, not as a non-retryable local client error."""
+    agent = _build_agent(monkeypatch)
+    calls = {"api": 0}
+
+    def _fake_api_call(api_kwargs):
+        calls["api"] += 1
+        if calls["api"] == 1:
+            return _CodexResponseWithBrokenOutputText()
         return _codex_message_response("Recovered")
 
     monkeypatch.setattr(agent, "_interruptible_api_call", _fake_api_call)

@@ -585,6 +585,58 @@ class TestNewEndpoints:
         resp = self.client.get("/api/cron/jobs/nonexistent-id")
         assert resp.status_code == 404
 
+    def test_cron_jobs_are_scoped_by_profile(self):
+        from hermes_cli.config import get_hermes_home
+        from hermes_cli.profiles import create_profile, get_profile_dir
+
+        create_profile("portal-cron", no_alias=True)
+        default_home = get_hermes_home()
+        profile_home = get_profile_dir("portal-cron")
+
+        def write_jobs(home, job_id, name):
+            cron_dir = home / "cron"
+            cron_dir.mkdir(parents=True, exist_ok=True)
+            (cron_dir / "jobs.json").write_text(
+                json.dumps(
+                    {
+                        "jobs": [
+                            {
+                                "id": job_id,
+                                "name": name,
+                                "prompt": name,
+                                "skills": [],
+                                "skill": None,
+                                "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"},
+                                "schedule_display": "every 60m",
+                                "repeat": {"times": None, "completed": 0},
+                                "enabled": True,
+                                "state": "scheduled",
+                                "next_run_at": "2099-01-01T00:00:00+00:00",
+                                "last_run_at": None,
+                                "last_status": None,
+                                "last_error": None,
+                                "deliver": "local",
+                                "origin": None,
+                            }
+                        ],
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        write_jobs(default_home, "default-job", "Default job")
+        write_jobs(profile_home, "profile-job", "Profile job")
+
+        default_jobs = self.client.get("/api/cron/jobs").json()
+        profile_jobs = self.client.get("/api/cron/jobs?profile=portal-cron").json()
+
+        assert [job["id"] for job in default_jobs] == ["default-job"]
+        assert [job["id"] for job in profile_jobs] == ["profile-job"]
+
+        default_lookup = self.client.get("/api/cron/jobs/default-job?profile=portal-cron")
+        assert default_lookup.status_code == 404
+
     def test_skills_list(self):
         resp = self.client.get("/api/skills")
         assert resp.status_code == 200
@@ -734,6 +786,39 @@ class TestNewEndpoints:
         data = resp.json()
         assert "profiles" in data
         assert any(p["name"] == "portal-test" for p in data["profiles"])
+
+    def test_profile_query_scopes_status_config_and_sessions(self):
+        from hermes_cli.config import save_config
+        from hermes_cli.profiles import create_profile, get_profile_dir
+        from hermes_state import SessionDB
+
+        create_profile("portal-test", no_alias=True)
+        profile_home = get_profile_dir("portal-test")
+        (profile_home / "config.yaml").write_text("model: profile/model\n", encoding="utf-8")
+        default_config = self.client.get("/api/config").json()
+        default_config["model"] = "default/model"
+        save_config(default_config)
+
+        db = SessionDB(profile_home / "state.db")
+        try:
+            db.create_session("profile-session", source="test", model="profile/model")
+        finally:
+            db.close()
+
+        status = self.client.get("/api/status?profile=portal-test").json()
+        assert status["profile"] == "portal-test"
+        assert status["hermes_home"] == str(profile_home)
+        assert status["config_path"] == str(profile_home / "config.yaml")
+
+        config = self.client.get("/api/config?profile=portal-test").json()
+        assert config["model"] == "profile/model"
+
+        sessions = self.client.get("/api/sessions?profile=portal-test").json()
+        assert sessions["total"] == 1
+        assert sessions["sessions"][0]["id"] == "profile-session"
+
+        default_sessions = self.client.get("/api/sessions").json()
+        assert default_sessions["total"] == 0
 
     def test_project_bot_provision_dry_run(self):
         resp = self.client.post(
