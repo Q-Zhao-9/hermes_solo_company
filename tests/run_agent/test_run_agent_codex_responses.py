@@ -635,6 +635,60 @@ def test_run_conversation_codex_refreshes_after_401_and_retries(monkeypatch):
     assert result["final_response"] == "Recovered after refresh"
 
 
+def test_run_conversation_codex_401_refresh_failure_returns_diagnostic_message(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    agent.provider = "openai-codex"
+    agent.api_mode = "codex_responses"
+    agent.base_url = "https://user:pass123@chatgpt.com/backend-api/codex?q=1"
+    calls = {"api": 0, "refresh": 0}
+
+    class _UnauthorizedError(RuntimeError):
+        def __init__(self):
+            super().__init__(
+                "Error code: 401 - {'error': {'message': 'Your authentication token has been invalidated. Please try signing in again.', 'type': 'invalid_request_error', 'code': 'token_invalidated', 'param': None}, 'status': 401}"
+            )
+            self.status_code = 401
+            self.body = {
+                "error": {
+                    "message": "Your authentication token has been invalidated. Please try signing in again.",
+                    "type": "invalid_request_error",
+                    "code": "token_invalidated",
+                    "param": None,
+                },
+                "status": 401,
+            }
+
+    def _fake_api_call(api_kwargs):
+        calls["api"] += 1
+        raise _UnauthorizedError()
+
+    def _fake_refresh(*, force=True):
+        calls["refresh"] += 1
+        assert force is True
+        return False
+
+    monkeypatch.setattr(agent, "_interruptible_api_call", _fake_api_call)
+    monkeypatch.setattr(agent, "_try_refresh_codex_client_credentials", _fake_refresh)
+
+    result = agent.run_conversation("Say OK")
+
+    assert calls == {"api": 1, "refresh": 1}
+    assert result["completed"] is False
+    assert result["failed"] is True
+    assert result["error_details"]["failed_module"] == "backend_model"
+    assert result["error_details"]["provider"] == "openai-codex"
+    assert result["error_details"]["status_code"] == 401
+    assert result["error_details"]["endpoint"] == "https://chatgpt.com/backend-api/codex"
+    assert "secret" not in result["error_details"]["endpoint"]
+    assert "q=" not in result["error_details"]["endpoint"]
+    assert result["error_details"]["reason"] == "token_invalidated"
+    assert "Backend model request failed" in result["final_response"]
+    assert "Failed module: backend_model" in result["final_response"]
+    assert "Provider: openai-codex" in result["final_response"]
+    assert "Your authentication token has been invalidated" in result["final_response"]
+    assert "hermes login --provider openai-codex" in result["final_response"]
+
+
 def test_try_refresh_codex_client_credentials_rebuilds_client(monkeypatch):
     agent = _build_agent(monkeypatch)
     closed = {"value": False}

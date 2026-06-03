@@ -3431,6 +3431,127 @@ class AIAgent:
 
         return context
 
+    @staticmethod
+    def _safe_backend_endpoint_for_error(base_url: Any) -> str:
+        """Return a diagnostic endpoint string without credentials or query secrets."""
+        raw = str(base_url or "unknown")
+        if raw == "unknown":
+            return raw
+        def _strip_query_fragment_and_userinfo(value: str) -> str:
+            value = value.split("#", 1)[0].split("?", 1)[0]
+            if "@" not in value:
+                return value
+            prefix, rest = value.rsplit("@", 1)
+            scheme_sep = prefix.rfind("://")
+            if scheme_sep >= 0:
+                return prefix[: scheme_sep + 3] + rest
+            if prefix.startswith("//"):
+                return "//" + rest
+            return rest
+
+        try:
+            from urllib.parse import urlsplit, urlunsplit
+
+            parsed = urlsplit(raw)
+            if not parsed.scheme or not parsed.netloc:
+                return _strip_query_fragment_and_userinfo(raw)
+            host = parsed.hostname or ""
+            try:
+                port = parsed.port
+            except ValueError:
+                port = None
+            if port:
+                host = f"{host}:{port}"
+            return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+        except Exception:
+            return _strip_query_fragment_and_userinfo(raw)
+
+    @staticmethod
+    def _normalize_status_code_for_error(status_code: Any) -> Any:
+        try:
+            return int(status_code)
+        except (TypeError, ValueError):
+            return status_code
+
+    @staticmethod
+    def _build_backend_model_error_details(
+        *,
+        provider: Any,
+        model: Any,
+        base_url: Any,
+        status_code: Any,
+        error: Exception,
+        error_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build structured, user-safe diagnostics for backend model failures."""
+        context = dict(error_context or {})
+        normalized_status = AIAgent._normalize_status_code_for_error(status_code)
+        details: Dict[str, Any] = {
+            "failed_module": "backend_model",
+            "provider": str(provider or "unknown"),
+            "model": str(model or "unknown"),
+            "endpoint": AIAgent._safe_backend_endpoint_for_error(base_url),
+            "status_code": normalized_status,
+            "error_type": type(error).__name__,
+            "message": context.get("message") or AIAgent._summarize_api_error(error),
+        }
+        if context.get("reason"):
+            details["reason"] = context["reason"]
+
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            payload = body.get("error") if isinstance(body.get("error"), dict) else body
+            if isinstance(payload, dict):
+                for key in ("type", "code", "param"):
+                    value = payload.get(key)
+                    if value not in (None, ""):
+                        details[f"provider_{key}"] = value
+            if "status" in body and details.get("status_code") is None:
+                details["status_code"] = AIAgent._normalize_status_code_for_error(body.get("status"))
+
+        return details
+
+    @staticmethod
+    def _format_backend_model_error_message(details: Dict[str, Any]) -> str:
+        """Format backend model diagnostics for gateway/front-end users."""
+        status_code = details.get("status_code")
+        status_line = f"HTTP {status_code}" if status_code else "unknown"
+        message = str(details.get("message") or "No detailed error message was provided.")[:600]
+        lines = [
+            "⚠️ Backend model request failed.",
+            "",
+            f"Failed module: {details.get('failed_module', 'backend_model')}",
+            f"Provider: {details.get('provider', 'unknown')}",
+            f"Model: {details.get('model', 'unknown')}",
+            f"Status: {status_line}",
+        ]
+        if details.get("reason"):
+            lines.append(f"Reason: {details['reason']}")
+        if details.get("provider_type"):
+            lines.append(f"Provider error type: {details['provider_type']}")
+        lines.extend([
+            f"Details: {message}",
+        ])
+
+        provider = str(details.get("provider") or "").lower()
+        if provider == "openai-codex" and status_code == 401:
+            lines.extend([
+                "",
+                "Suggested fix: refresh the OpenAI Codex login, then restart the gateway so the bot picks up the new token.",
+                "Command: hermes login --provider openai-codex",
+            ])
+        elif status_code == 401:
+            lines.extend([
+                "",
+                "Suggested fix: re-authenticate or update the API key for this provider, then restart the gateway.",
+            ])
+        else:
+            lines.extend([
+                "",
+                "Try again later, switch providers, or check the provider configuration if this repeats.",
+            ])
+        return "\n".join(lines)
+
     def _usage_summary_for_api_request_hook(self, response: Any) -> Optional[Dict[str, Any]]:
         """Token buckets for ``post_api_request`` plugins (no raw ``response`` object)."""
         if response is None:
@@ -10349,11 +10470,12 @@ class AIAgent:
 
                     _provider = getattr(self, "provider", "unknown")
                     _base = getattr(self, "base_url", "unknown")
+                    _safe_base = self._safe_backend_endpoint_for_error(_base)
                     _model = getattr(self, "model", "unknown")
                     _status_code_str = f" [HTTP {status_code}]" if status_code else ""
                     self._vprint(f"{self.log_prefix}⚠️  API call failed (attempt {retry_count}/{max_retries}): {error_type}{_status_code_str}", force=True)
                     self._vprint(f"{self.log_prefix}   🔌 Provider: {_provider}  Model: {_model}", force=True)
-                    self._vprint(f"{self.log_prefix}   🌐 Endpoint: {_base}", force=True)
+                    self._vprint(f"{self.log_prefix}   🌐 Endpoint: {_safe_base}", force=True)
                     self._vprint(f"{self.log_prefix}   📝 Error: {_error_summary}", force=True)
                     if status_code and status_code < 500:
                         _err_body = getattr(api_error, "body", None)
@@ -10774,7 +10896,7 @@ class AIAgent:
                         )
                         self._vprint(f"{self.log_prefix}❌ Non-retryable client error (HTTP {status_code}). Aborting.", force=True)
                         self._vprint(f"{self.log_prefix}   🔌 Provider: {_provider}  Model: {_model}", force=True)
-                        self._vprint(f"{self.log_prefix}   🌐 Endpoint: {_base}", force=True)
+                        self._vprint(f"{self.log_prefix}   🌐 Endpoint: {_safe_base}", force=True)
                         # Actionable guidance for common auth errors
                         if classified.is_auth or classified.reason == FailoverReason.billing:
                             if _provider == "openai-codex" and status_code == 401:
@@ -10790,6 +10912,17 @@ class AIAgent:
                                     self._vprint(f"{self.log_prefix}      • Check credits: https://openrouter.ai/settings/credits", force=True)
                         else:
                             self._vprint(f"{self.log_prefix}   💡 This type of error won't be fixed by retrying.", force=True)
+                        backend_error_details = self._build_backend_model_error_details(
+                            provider=_provider,
+                            model=_model,
+                            base_url=_base,
+                            status_code=status_code,
+                            error=api_error,
+                            error_context=error_context,
+                        )
+                        backend_error_message = self._format_backend_model_error_message(
+                            backend_error_details
+                        )
                         logging.error(
                             f"{self.log_prefix}Non-retryable client error: {api_error}",
                             exc_info=True,
@@ -10808,12 +10941,13 @@ class AIAgent:
                         else:
                             self._persist_session(messages, conversation_history)
                         return {
-                            "final_response": None,
+                            "final_response": backend_error_message,
                             "messages": messages,
                             "api_calls": api_call_count,
                             "completed": False,
                             "failed": True,
-                            "error": str(api_error),
+                            "error": backend_error_details.get("message") or str(api_error),
+                            "error_details": backend_error_details,
                         }
 
                     if retry_count >= max_retries:
