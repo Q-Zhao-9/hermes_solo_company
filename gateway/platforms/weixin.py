@@ -1982,7 +1982,21 @@ async def send_weixin_direct(
 
     live_adapter = _LIVE_ADAPTERS.get(resolved_token)
     send_session = getattr(live_adapter, '_send_session', None)
+    use_live_adapter = False
     if live_adapter is not None and send_session is not None and not send_session.closed:
+        # Aiohttp sessions are bound to the event loop that created them.  Cron
+        # fallback and send_message can call this helper from a fresh loop/thread;
+        # reusing the gateway adapter in that loop raises aiohttp errors such as
+        # "Timeout context manager should be used inside a task".  Only reuse the
+        # live adapter when we are already on the session's owning loop.
+        try:
+            session_loop = getattr(send_session, "_loop", None)
+            current_loop = asyncio.get_running_loop()
+            use_live_adapter = session_loop is current_loop
+        except Exception:
+            use_live_adapter = False
+
+    if use_live_adapter:
         last_result: Optional[SendResult] = None
         cleaned = live_adapter.format_message(message)
         if cleaned:

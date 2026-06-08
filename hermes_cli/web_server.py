@@ -10,6 +10,7 @@ Usage:
 """
 
 import asyncio
+import concurrent.futures
 from contextlib import contextmanager
 import hmac
 import importlib.util
@@ -1321,7 +1322,7 @@ def _resolve_provider_status(provider_id: str, status_fn) -> Dict[str, Any]:
 
 
 @app.get("/api/providers/oauth")
-async def list_oauth_providers():
+async def list_oauth_providers(profile: Optional[str] = None):
     """Enumerate every OAuth-capable LLM provider with current status.
 
     Response shape (per provider):
@@ -1338,22 +1339,32 @@ async def list_oauth_providers():
           expires_at       ISO timestamp string or null
           has_refresh_token bool
     """
-    providers = []
-    for p in _OAUTH_PROVIDER_CATALOG:
-        status = _resolve_provider_status(p["id"], p.get("status_fn"))
-        providers.append({
-            "id": p["id"],
-            "name": p["name"],
-            "flow": p["flow"],
-            "cli_command": p["cli_command"],
-            "docs_url": p["docs_url"],
-            "status": status,
-        })
-    return {"providers": providers}
+    def _load_for_profile():
+        providers = []
+        with _dashboard_profile_env(profile):
+            for p in _OAUTH_PROVIDER_CATALOG:
+                status = _resolve_provider_status(p["id"], p.get("status_fn"))
+                providers.append({
+                    "id": p["id"],
+                    "name": p["name"],
+                    "flow": p["flow"],
+                    "cli_command": p["cli_command"],
+                    "docs_url": p["docs_url"],
+                    "status": status,
+                })
+        return {"providers": providers}
+
+    loop = asyncio.get_running_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="oauth-status")
+    future = loop.run_in_executor(executor, _load_for_profile)
+    try:
+        return await asyncio.wait_for(future, timeout=10.0)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 @app.delete("/api/providers/oauth/{provider_id}")
-async def disconnect_oauth_provider(provider_id: str, request: Request):
+async def disconnect_oauth_provider(provider_id: str, request: Request, profile: Optional[str] = None):
     """Disconnect an OAuth provider. Token-protected (matches /env/reveal)."""
     _require_token(request)
 
@@ -1365,34 +1376,35 @@ async def disconnect_oauth_provider(provider_id: str, request: Request):
                    f"Available: {', '.join(sorted(valid_ids))}",
         )
 
-    # Anthropic and claude-code clear the same Hermes-managed PKCE file
-    # AND forget the Claude Code import. We don't touch ~/.claude/* directly
-    # — that's owned by the Claude Code CLI; users can re-auth there if they
-    # want to undo a disconnect.
-    if provider_id in ("anthropic", "claude-code"):
-        try:
-            from agent.anthropic_adapter import _HERMES_OAUTH_FILE
-            if _HERMES_OAUTH_FILE.exists():
-                _HERMES_OAUTH_FILE.unlink()
-        except Exception:
-            pass
-        # Also clear the credential pool entry if present.
+    with _dashboard_profile_env(profile):
+        # Anthropic and claude-code clear the same Hermes-managed PKCE file
+        # AND forget the Claude Code import. We don't touch ~/.claude/* directly
+        # — that's owned by the Claude Code CLI; users can re-auth there if they
+        # want to undo a disconnect.
+        if provider_id in ("anthropic", "claude-code"):
+            try:
+                from agent.anthropic_adapter import _HERMES_OAUTH_FILE
+                if _HERMES_OAUTH_FILE.exists():
+                    _HERMES_OAUTH_FILE.unlink()
+            except Exception:
+                pass
+            # Also clear the credential pool entry if present.
+            try:
+                from hermes_cli.auth import clear_provider_auth
+                clear_provider_auth("anthropic")
+            except Exception:
+                pass
+            _log.info("oauth/disconnect: %s", provider_id)
+            return {"ok": True, "provider": provider_id}
+
         try:
             from hermes_cli.auth import clear_provider_auth
-            clear_provider_auth("anthropic")
-        except Exception:
-            pass
-        _log.info("oauth/disconnect: %s", provider_id)
-        return {"ok": True, "provider": provider_id}
-
-    try:
-        from hermes_cli.auth import clear_provider_auth
-        cleared = clear_provider_auth(provider_id)
-        _log.info("oauth/disconnect: %s (cleared=%s)", provider_id, cleared)
-        return {"ok": bool(cleared), "provider": provider_id}
-    except Exception as e:
-        _log.exception("disconnect %s failed", provider_id)
-        raise HTTPException(status_code=500, detail=str(e))
+            cleared = clear_provider_auth(provider_id)
+            _log.info("oauth/disconnect: %s (cleared=%s)", provider_id, cleared)
+            return {"ok": bool(cleared), "provider": provider_id}
+        except Exception as e:
+            _log.exception("disconnect %s failed", provider_id)
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -1471,10 +1483,39 @@ def _new_oauth_session(provider_id: str, flow: str) -> tuple[str, Dict[str, Any]
         "created_at": time.time(),
         "status": "pending",  # pending | approved | denied | expired | error
         "error_message": None,
+        "profile": os.environ.get("HERMES_PROFILE", "default") or "default",
+        "hermes_home": str(get_hermes_home()),
     }
     with _oauth_sessions_lock:
         _oauth_sessions[sid] = sess
     return sid, sess
+
+
+@contextmanager
+def _oauth_session_profile_env(session_id: str):
+    """Temporarily restore the profile selected when an OAuth session began."""
+    with _oauth_sessions_lock:
+        sess = _oauth_sessions.get(session_id)
+        home = sess.get("hermes_home") if sess else None
+        profile = sess.get("profile") if sess else None
+    with _profile_env_lock:
+        old_home = os.environ.get("HERMES_HOME")
+        old_profile = os.environ.get("HERMES_PROFILE")
+        if home:
+            os.environ["HERMES_HOME"] = str(home)
+        if profile:
+            os.environ["HERMES_PROFILE"] = str(profile)
+        try:
+            yield
+        finally:
+            if old_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = old_home
+            if old_profile is None:
+                os.environ.pop("HERMES_PROFILE", None)
+            else:
+                os.environ["HERMES_PROFILE"] = old_profile
 
 
 def _save_anthropic_oauth_creds(access_token: str, refresh_token: str, expires_at_ms: int) -> None:
@@ -1615,7 +1656,7 @@ def _submit_anthropic_pkce(session_id: str, code_input: str) -> Dict[str, Any]:
     return {"ok": True, "status": "approved"}
 
 
-async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
+async def _start_device_code_flow(provider_id: str, profile: Optional[str] = None) -> Dict[str, Any]:
     """Initiate a device-code flow (Nous or OpenAI Codex).
 
     Calls the provider's device-auth endpoint via the existing CLI helpers,
@@ -1626,29 +1667,30 @@ async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
     if provider_id == "nous":
         from hermes_cli.auth import _request_device_code, PROVIDER_REGISTRY
         import httpx
-        pconfig = PROVIDER_REGISTRY["nous"]
-        portal_base_url = (
-            os.getenv("HERMES_PORTAL_BASE_URL")
-            or os.getenv("NOUS_PORTAL_BASE_URL")
-            or pconfig.portal_base_url
-        ).rstrip("/")
-        client_id = pconfig.client_id
-        scope = pconfig.scope
-        def _do_nous_device_request():
-            with httpx.Client(timeout=httpx.Timeout(15.0), headers={"Accept": "application/json"}) as client:
-                return _request_device_code(
-                    client=client,
-                    portal_base_url=portal_base_url,
-                    client_id=client_id,
-                    scope=scope,
-                )
-        device_data = await asyncio.get_event_loop().run_in_executor(None, _do_nous_device_request)
-        sid, sess = _new_oauth_session("nous", "device_code")
-        sess["device_code"] = str(device_data["device_code"])
-        sess["interval"] = int(device_data["interval"])
-        sess["expires_at"] = time.time() + int(device_data["expires_in"])
-        sess["portal_base_url"] = portal_base_url
-        sess["client_id"] = client_id
+        with _dashboard_profile_env(profile):
+            pconfig = PROVIDER_REGISTRY["nous"]
+            portal_base_url = (
+                os.getenv("HERMES_PORTAL_BASE_URL")
+                or os.getenv("NOUS_PORTAL_BASE_URL")
+                or pconfig.portal_base_url
+            ).rstrip("/")
+            client_id = pconfig.client_id
+            scope = pconfig.scope
+            def _do_nous_device_request():
+                with httpx.Client(timeout=httpx.Timeout(15.0), headers={"Accept": "application/json"}) as client:
+                    return _request_device_code(
+                        client=client,
+                        portal_base_url=portal_base_url,
+                        client_id=client_id,
+                        scope=scope,
+                    )
+            device_data = await asyncio.get_event_loop().run_in_executor(None, _do_nous_device_request)
+            sid, sess = _new_oauth_session("nous", "device_code")
+            sess["device_code"] = str(device_data["device_code"])
+            sess["interval"] = int(device_data["interval"])
+            sess["expires_at"] = time.time() + int(device_data["expires_in"])
+            sess["portal_base_url"] = portal_base_url
+            sess["client_id"] = client_id
         threading.Thread(
             target=_nous_poller, args=(sid,), daemon=True, name=f"oauth-poll-{sid[:6]}"
         ).start()
@@ -1663,7 +1705,8 @@ async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
 
     if provider_id == "openai-codex":
         # Codex uses fixed OpenAI device-auth endpoints; reuse the helper.
-        sid, _ = _new_oauth_session("openai-codex", "device_code")
+        with _dashboard_profile_env(profile):
+            sid, _ = _new_oauth_session("openai-codex", "device_code")
         # Use the helper but in a thread because it polls inline.
         # We can't extract just the start step without refactoring auth.py,
         # so we run the full helper in a worker and proxy the user_code +
@@ -1701,6 +1744,11 @@ async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
 
 def _nous_poller(session_id: str) -> None:
     """Background poller that drives a Nous device-code flow to completion."""
+    with _oauth_session_profile_env(session_id):
+        _nous_poller_for_active_profile(session_id)
+
+
+def _nous_poller_for_active_profile(session_id: str) -> None:
     from hermes_cli.auth import _poll_for_token, refresh_nous_oauth_from_state
     from datetime import datetime, timezone
     import httpx
@@ -1772,6 +1820,11 @@ def _codex_full_login_worker(session_id: str) -> None:
     single function — we need to surface the user_code to the dashboard the
     moment we receive it, well before polling completes.
     """
+    with _oauth_session_profile_env(session_id):
+        _codex_full_login_worker_for_active_profile(session_id)
+
+
+def _codex_full_login_worker_for_active_profile(session_id: str) -> None:
     try:
         import httpx
         from hermes_cli.auth import (
@@ -1857,7 +1910,11 @@ def _codex_full_login_worker(session_id: str) -> None:
         if not access_token:
             raise RuntimeError("token exchange did not return access_token")
 
-        # Persist via credential pool — same shape as auth_commands.add_command
+        # Persist via credential pool — same shape as auth_commands.add_command.
+        # Re-linking after `hermes auth remove openai-codex` must clear the
+        # canonical suppression marker, otherwise the new dashboard login can
+        # remain hidden from runtime pool resolution.
+        from hermes_cli.auth import unsuppress_credential_source
         from agent.credential_pool import (
             PooledCredential,
             load_pool,
@@ -1865,6 +1922,7 @@ def _codex_full_login_worker(session_id: str) -> None:
             SOURCE_MANUAL,
         )
         import uuid as _uuid
+        unsuppress_credential_source("openai-codex", "device_code")
         pool = load_pool("openai-codex")
         base_url = (
             os.getenv("HERMES_CODEX_BASE_URL", "").strip().rstrip("/")
@@ -1895,7 +1953,7 @@ def _codex_full_login_worker(session_id: str) -> None:
 
 
 @app.post("/api/providers/oauth/{provider_id}/start")
-async def start_oauth_login(provider_id: str, request: Request):
+async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None):
     """Initiate an OAuth login flow. Token-protected."""
     _require_token(request)
     _gc_oauth_sessions()
@@ -1910,9 +1968,10 @@ async def start_oauth_login(provider_id: str, request: Request):
         )
     try:
         if catalog_entry["flow"] == "pkce":
-            return _start_anthropic_pkce()
+            with _dashboard_profile_env(profile):
+                return _start_anthropic_pkce()
         if catalog_entry["flow"] == "device_code":
-            return await _start_device_code_flow(provider_id)
+            return await _start_device_code_flow(provider_id, profile)
     except HTTPException:
         raise
     except Exception as e:
@@ -1927,13 +1986,14 @@ class OAuthSubmitBody(BaseModel):
 
 
 @app.post("/api/providers/oauth/{provider_id}/submit")
-async def submit_oauth_code(provider_id: str, body: OAuthSubmitBody, request: Request):
+async def submit_oauth_code(provider_id: str, body: OAuthSubmitBody, request: Request, profile: Optional[str] = None):
     """Submit the auth code for PKCE flows. Token-protected."""
     _require_token(request)
     if provider_id == "anthropic":
-        return await asyncio.get_event_loop().run_in_executor(
-            None, _submit_anthropic_pkce, body.session_id, body.code,
-        )
+        with _dashboard_profile_env(profile):
+            return await asyncio.get_event_loop().run_in_executor(
+                None, _submit_anthropic_pkce, body.session_id, body.code,
+            )
     raise HTTPException(status_code=400, detail=f"submit not supported for {provider_id}")
 
 

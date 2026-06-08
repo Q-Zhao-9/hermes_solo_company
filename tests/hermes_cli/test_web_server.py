@@ -1805,3 +1805,155 @@ class TestDashboardPluginManifestExtensions:
         plugins = web_server._get_dashboard_plugins(force_rescan=True)
         entry = next(p for p in plugins if p["name"] == "mixed-slots")
         assert entry["slots"] == ["sidebar", "header-right"]
+
+
+class TestCodexDashboardOAuth:
+    def test_codex_dashboard_relogin_clears_device_code_suppression(
+        self, tmp_path, monkeypatch, _isolate_hermes_home
+    ):
+        try:
+            import httpx
+        except ImportError:
+            pytest.skip("httpx not installed")
+
+        from hermes_constants import get_hermes_home
+        from hermes_cli import web_server
+
+        auth_path = get_hermes_home() / "auth.json"
+        auth_path.write_text(json.dumps({
+            "version": 1,
+            "providers": {},
+            "credential_pool": {"openai-codex": []},
+            "suppressed_sources": {"openai-codex": ["device_code"]},
+        }))
+
+        class _Response:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                if url.endswith("/api/accounts/deviceauth/usercode"):
+                    return _Response(200, {
+                        "user_code": "CODE-123",
+                        "device_auth_id": "device-auth-id",
+                        "interval": 1,
+                    })
+                if url.endswith("/api/accounts/deviceauth/token"):
+                    return _Response(200, {
+                        "authorization_code": "authorization-code",
+                        "code_verifier": "code-verifier",
+                    })
+                return _Response(200, {
+                    "access_token": "codex-access-token",
+                    "refresh_token": "codex-refresh-token",
+                })
+
+        session_id = "codex-dashboard-test"
+        with web_server._oauth_sessions_lock:
+            web_server._oauth_sessions[session_id] = {
+                "session_id": session_id,
+                "provider": "openai-codex",
+                "flow": "device_code",
+                "created_at": web_server.time.time(),
+                "status": "pending",
+                "error_message": None,
+                "profile": "default",
+                "hermes_home": str(get_hermes_home()),
+            }
+
+        try:
+            monkeypatch.setattr(httpx, "Client", _Client)
+            monkeypatch.setattr(web_server.time, "sleep", lambda _seconds: None)
+
+            web_server._codex_full_login_worker(session_id)
+
+            with web_server._oauth_sessions_lock:
+                assert web_server._oauth_sessions[session_id]["status"] == "approved"
+
+            payload = json.loads(auth_path.read_text())
+            assert "openai-codex" not in payload.get("suppressed_sources", {})
+            entries = payload["credential_pool"]["openai-codex"]
+            entry = next(item for item in entries if item["source"] == "manual:dashboard_device_code")
+            assert entry["access_token"] == "codex-access-token"
+            assert entry["refresh_token"] == "codex-refresh-token"
+        finally:
+            with web_server._oauth_sessions_lock:
+                web_server._oauth_sessions.pop(session_id, None)
+
+
+class TestDashboardProfileScopedKeys:
+    def test_get_env_vars_uses_selected_profile(self, tmp_path, monkeypatch):
+        """The Keys page env data should read the selected profile's .env."""
+        import asyncio
+        import hermes_cli.web_server as web_server
+
+        default_home = tmp_path / "default"
+        profile_home = tmp_path / "profile"
+        default_home.mkdir()
+        profile_home.mkdir()
+        (default_home / ".env").write_text("")
+        (profile_home / ".env").write_text("OPENROUTER_API_KEY=sk-profile123456789\n")
+
+        monkeypatch.setenv("HERMES_HOME", str(default_home))
+        monkeypatch.setattr(
+            web_server,
+            "_resolve_dashboard_profile",
+            lambda profile: ("coder", profile_home) if profile == "coder" else ("default", default_home),
+        )
+
+        profile_data = asyncio.run(web_server.get_env_vars(profile="coder"))
+        default_data = asyncio.run(web_server.get_env_vars())
+
+        assert profile_data["OPENROUTER_API_KEY"]["is_set"] is True
+        assert default_data["OPENROUTER_API_KEY"]["is_set"] is False
+
+    def test_oauth_provider_status_uses_selected_profile(self, tmp_path, monkeypatch):
+        """The Keys page OAuth cards should resolve status in the selected profile."""
+        import asyncio
+        import hermes_cli.web_server as web_server
+        from hermes_cli.config import get_hermes_home
+
+        default_home = tmp_path / "default"
+        profile_home = tmp_path / "profile"
+        default_home.mkdir()
+        profile_home.mkdir()
+
+        monkeypatch.setenv("HERMES_HOME", str(default_home))
+        monkeypatch.setattr(
+            web_server,
+            "_resolve_dashboard_profile",
+            lambda profile: ("coder", profile_home) if profile == "coder" else ("default", default_home),
+        )
+        monkeypatch.setattr(
+            web_server,
+            "_OAUTH_PROVIDER_CATALOG",
+            ({
+                "id": "fake-oauth",
+                "name": "Fake OAuth",
+                "flow": "external",
+                "cli_command": "fake auth",
+                "docs_url": "https://example.invalid",
+                "status_fn": lambda: {
+                    "logged_in": True,
+                    "source_label": str(get_hermes_home()),
+                },
+            },),
+        )
+
+        resp = asyncio.run(web_server.list_oauth_providers(profile="coder"))
+        provider = resp["providers"][0]
+        assert provider["status"]["source_label"] == str(profile_home)

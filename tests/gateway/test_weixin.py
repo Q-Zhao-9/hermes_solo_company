@@ -481,6 +481,65 @@ class TestWeixinRemoteMediaSafety:
                 raise AssertionError("expected ValueError for unsafe URL")
 
 
+class _FakeClientSession:
+    closed = False
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.closed = True
+        return False
+
+
+class TestWeixinDirectSend:
+    @patch.object(WeixinAdapter, "send", new_callable=AsyncMock)
+    def test_send_weixin_direct_ignores_live_adapter_from_another_event_loop(self, adapter_send_mock, tmp_path, monkeypatch):
+        """Standalone sends must not reuse the gateway adapter's aiohttp session across loops.
+
+        Cron fallback runs in its own fresh event loop.  Reusing a live Weixin
+        adapter/session owned by the gateway loop can raise aiohttp's
+        "Timeout context manager should be used inside a task" error.  The
+        direct helper should create a one-shot adapter/session instead.
+        """
+        stale_loop = asyncio.new_event_loop()
+
+        class _ForeignLoopSession:
+            closed = False
+            _loop = stale_loop
+
+        live_adapter = _make_adapter()
+        live_adapter._send_session = _ForeignLoopSession()
+        live_adapter.send = AsyncMock(return_value=SendResult(success=False, error="wrong live adapter"))
+
+        monkeypatch.setitem(weixin._LIVE_ADAPTERS, "test-token", live_adapter)
+        monkeypatch.setattr(weixin.aiohttp, "ClientSession", _FakeClientSession)
+        monkeypatch.setattr(weixin, "get_hermes_home", lambda: tmp_path)
+        adapter_send_mock.return_value = SendResult(success=True, message_id="direct-msg")
+
+        try:
+            result = asyncio.run(
+                weixin.send_weixin_direct(
+                    extra={"account_id": "test-account"},
+                    token="test-token",
+                    chat_id="wxid_test123",
+                    message="hello from cron",
+                )
+            )
+        finally:
+            stale_loop.close()
+            weixin._LIVE_ADAPTERS.pop("test-token", None)
+
+        assert result["success"] is True
+        assert result["message_id"] == "direct-msg"
+        live_adapter.send.assert_not_awaited()
+        adapter_send_mock.assert_awaited_once()
+
+
 class TestWeixinMarkdownLinks:
     """Markdown links should be preserved so WeChat can render them natively."""
 
