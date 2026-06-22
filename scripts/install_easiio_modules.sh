@@ -25,6 +25,7 @@ Examples:
   scripts/install_easiio_modules.sh --dry-run
   scripts/install_easiio_modules.sh --module website_chatbot --target ~/.hermes/tools
   scripts/install_easiio_modules.sh --skill class4/student-lead-followup --skills-target ~/.hermes/skills
+  scripts/install_easiio_modules.sh --skill class7/brand-visual-system --skills-target ~/.hermes/skills
 
 Safety:
   - Copies source files from modules/<name>/ to the target tools directory.
@@ -100,6 +101,8 @@ if [[ "$INSTALL_SKILLS" -eq 1 && ${#SKILLS[@]} -eq 0 ]]; then
   SKILLS=(
     class4/class-skill-studio-implementation
     class4/student-lead-followup
+    class7/brand-visual-system
+    class7/class7-brand-studio-implementation
     web-development/website-chatbot-solo-crm
     web-development/website-wiki-module
   )

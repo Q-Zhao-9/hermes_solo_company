@@ -26,7 +26,7 @@ ${HERMES_HOME:-$HOME/.hermes}/tools
 ${HERMES_HOME:-$HOME/.hermes}/skills
 ```
 
-The installer copies both reusable tools under `modules/` and Easiio-specific skills under `skills/`, including the Class 4 Skill Studio skills.
+The installer copies both reusable tools under `modules/` and Easiio-specific skills under `skills/`, including the Class 4 Skill Studio skills and the Class 7 Brand Studio skills.
 
 Dry run first:
 
