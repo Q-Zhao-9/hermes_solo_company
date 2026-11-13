@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Hermes MCP for WordPress
  * Description: Exposes a controlled MCP-style endpoint so Hermes Agent can manage WordPress content through approved tools.
- * Version: 0.1.0
+ * Version: 0.5.2
  * Author: Hermes Agent
  * License: MIT
  * Requires at least: 6.2
@@ -19,21 +19,38 @@ final class Hermes_MCP_WordPress {
     private const REST_NAMESPACE = 'hermes-mcp/v1';
     private const REST_ROUTE = '/mcp';
     private const MAX_AUDIT_ROWS = 200;
+    private const GEO_SCHEMA_META_KEY = '_hermes_mcp_geo_schema_json';
 
     private static ?Hermes_MCP_WordPress $instance = null;
 
     private array $default_tools = [
         'list_posts' => true,
         'get_post' => true,
+        'resolve_content_by_url_or_slug' => true,
+        'get_content_seo_bundle' => true,
         'create_draft_post' => true,
         'update_post' => true,
         'list_pages' => true,
         'get_page' => true,
         'create_draft_page' => true,
         'update_page' => true,
+        'update_seo_fields' => true,
+        'set_featured_media' => true,
         'upload_media_from_url' => true,
         'list_comments' => true,
         'update_comment_status' => true,
+        'review_geo_post' => true,
+        'review_geo_page' => true,
+        'suggest_post_summary' => true,
+        'suggest_internal_links' => true,
+        'generate_schema_for_post' => true,
+        'generate_schema_for_page' => true,
+        'append_post_summary' => true,
+        'append_page_summary' => true,
+        'apply_internal_links' => true,
+        'save_post_schema' => true,
+        'save_page_schema' => true,
+        'get_geo_enhancement_preview' => true,
     ];
 
     public static function instance(): self {
@@ -48,6 +65,7 @@ final class Hermes_MCP_WordPress {
         add_action('admin_menu', [$this, 'register_admin_page']);
         add_action('network_admin_menu', [$this, 'register_network_admin_page']);
         add_action('admin_init', [$this, 'handle_settings_post']);
+        add_action('wp_head', [$this, 'render_saved_geo_schema'], 1);
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), [$this, 'plugin_action_links']);
     }
 
@@ -67,14 +85,31 @@ final class Hermes_MCP_WordPress {
             'tools' => [
                 'list_posts' => true,
                 'get_post' => true,
+                'resolve_content_by_url_or_slug' => true,
+                'get_content_seo_bundle' => true,
                 'create_draft_post' => true,
                 'update_post' => true,
                 'list_pages' => true,
                 'get_page' => true,
+                'create_draft_page' => true,
                 'update_page' => true,
+                'update_seo_fields' => true,
+                'set_featured_media' => true,
                 'upload_media_from_url' => true,
                 'list_comments' => true,
                 'update_comment_status' => true,
+                'review_geo_post' => true,
+                'review_geo_page' => true,
+                'suggest_post_summary' => true,
+                'suggest_internal_links' => true,
+                'generate_schema_for_post' => true,
+                'generate_schema_for_page' => true,
+                'append_post_summary' => true,
+                'append_page_summary' => true,
+                'apply_internal_links' => true,
+                'save_post_schema' => true,
+                'save_page_schema' => true,
+                'get_geo_enhancement_preview' => true,
             ],
             'default_post_status' => 'draft',
             'audit_enabled' => true,
@@ -188,7 +223,7 @@ final class Hermes_MCP_WordPress {
                     'protocolVersion' => '2025-03-26',
                     'serverInfo' => [
                         'name' => 'hermes-mcp-wordpress',
-                        'version' => '0.1.0',
+                        'version' => '0.5.2',
                     ],
                     'capabilities' => [
                         'tools' => new stdClass(),
@@ -275,6 +310,32 @@ final class Hermes_MCP_WordPress {
                     'properties' => ['id' => ['type' => 'integer']],
                 ],
             ],
+            'resolve_content_by_url_or_slug' => [
+                'name' => 'resolve_content_by_url_or_slug',
+                'description' => 'Resolve WordPress content from an id, public URL, or slug.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'url' => ['type' => 'string'],
+                        'slug' => ['type' => 'string'],
+                        'post_type' => ['type' => 'string', 'description' => 'any, page, or post'],
+                    ],
+                ],
+            ],
+            'get_content_seo_bundle' => [
+                'name' => 'get_content_seo_bundle',
+                'description' => 'Get content, featured media, and SEO metadata for a post or page resolved by id, URL, or slug.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'url' => ['type' => 'string'],
+                        'slug' => ['type' => 'string'],
+                        'post_type' => ['type' => 'string', 'description' => 'any, page, or post'],
+                    ],
+                ],
+            ],
             'create_draft_post' => [
                 'name' => 'create_draft_post',
                 'description' => 'Create a draft WordPress post. Publishing should be a separate human-reviewed action.',
@@ -357,6 +418,41 @@ final class Hermes_MCP_WordPress {
                     ],
                 ],
             ],
+            'update_seo_fields' => [
+                'name' => 'update_seo_fields',
+                'description' => 'Update supported SEO plugin meta fields for a post or page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'seo_title' => ['type' => 'string'],
+                        'meta_description' => ['type' => 'string'],
+                        'canonical_url' => ['type' => 'string'],
+                        'robots' => ['type' => 'string'],
+                        'og_title' => ['type' => 'string'],
+                        'og_description' => ['type' => 'string'],
+                        'og_image' => ['type' => 'string'],
+                        'twitter_title' => ['type' => 'string'],
+                        'twitter_description' => ['type' => 'string'],
+                        'twitter_image' => ['type' => 'string'],
+                        'focus_keyword' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+            'set_featured_media' => [
+                'name' => 'set_featured_media',
+                'description' => 'Set the featured media attachment for a post or page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id', 'media_id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'media_id' => ['type' => 'integer'],
+                        'alt_text' => ['type' => 'string'],
+                    ],
+                ],
+            ],
             'upload_media_from_url' => [
                 'name' => 'upload_media_from_url',
                 'description' => 'Upload an image or file to the WordPress media library from a URL.',
@@ -394,6 +490,148 @@ final class Hermes_MCP_WordPress {
                     ],
                 ],
             ],
+            'review_geo_post' => [
+                'name' => 'review_geo_post',
+                'description' => 'Review one WordPress post for GEO/answer-engine readiness and return a scorecard with quick wins.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => ['id' => ['type' => 'integer']],
+                ],
+            ],
+            'review_geo_page' => [
+                'name' => 'review_geo_page',
+                'description' => 'Review one WordPress page for GEO/answer-engine readiness and return a scorecard with quick wins.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => ['id' => ['type' => 'integer']],
+                ],
+            ],
+            'suggest_post_summary' => [
+                'name' => 'suggest_post_summary',
+                'description' => 'Generate a concise summary block suggestion for a WordPress post.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'style' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+            'suggest_internal_links' => [
+                'name' => 'suggest_internal_links',
+                'description' => 'Suggest relevant internal links for a WordPress post or page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'limit' => ['type' => 'integer'],
+                    ],
+                ],
+            ],
+            'generate_schema_for_post' => [
+                'name' => 'generate_schema_for_post',
+                'description' => 'Generate review-safe schema JSON-LD for a WordPress post.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'schema_type' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+            'generate_schema_for_page' => [
+                'name' => 'generate_schema_for_page',
+                'description' => 'Generate review-safe schema JSON-LD for a WordPress page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'schema_type' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+            'append_post_summary' => [
+                'name' => 'append_post_summary',
+                'description' => 'Append an approved GEO summary block to a WordPress post.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'summary_html' => ['type' => 'string'],
+                        'heading' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+            'append_page_summary' => [
+                'name' => 'append_page_summary',
+                'description' => 'Append an approved GEO summary block to a WordPress page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'summary_html' => ['type' => 'string'],
+                        'heading' => ['type' => 'string'],
+                    ],
+                ],
+            ],
+            'apply_internal_links' => [
+                'name' => 'apply_internal_links',
+                'description' => 'Append an approved GEO internal-link block to a WordPress post or page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'suggestions' => ['type' => 'array'],
+                    ],
+                ],
+            ],
+            'save_post_schema' => [
+                'name' => 'save_post_schema',
+                'description' => 'Save approved GEO schema JSON-LD to post meta for a WordPress post.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'schema_type' => ['type' => 'string'],
+                        'schema_json' => ['type' => 'object'],
+                    ],
+                ],
+            ],
+            'save_page_schema' => [
+                'name' => 'save_page_schema',
+                'description' => 'Save approved GEO schema JSON-LD to post meta for a WordPress page.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'schema_type' => ['type' => 'string'],
+                        'schema_json' => ['type' => 'object'],
+                    ],
+                ],
+            ],
+            'get_geo_enhancement_preview' => [
+                'name' => 'get_geo_enhancement_preview',
+                'description' => 'Preview approved GEO summary, link, and schema changes before applying them.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'required' => ['id'],
+                    'properties' => [
+                        'id' => ['type' => 'integer'],
+                        'type' => ['type' => 'string'],
+                    ],
+                ],
+            ],
         ];
 
         return array_filter($definitions, static function (array $definition) use ($enabled_tools): bool {
@@ -410,15 +648,31 @@ final class Hermes_MCP_WordPress {
         $result = match ($name) {
             'list_posts' => $this->list_content('post', $arguments),
             'get_post' => $this->get_content('post', $arguments),
+            'resolve_content_by_url_or_slug' => $this->resolve_content_by_url_or_slug($arguments),
+            'get_content_seo_bundle' => $this->get_content_seo_bundle($arguments),
             'create_draft_post' => $this->create_draft_post($arguments),
             'update_post' => $this->update_content('post', $arguments),
             'list_pages' => $this->list_content('page', $arguments),
             'get_page' => $this->get_content('page', $arguments),
             'create_draft_page' => $this->create_draft_page($arguments),
             'update_page' => $this->update_content('page', $arguments),
+            'update_seo_fields' => $this->update_seo_fields($arguments),
+            'set_featured_media' => $this->set_featured_media($arguments),
             'upload_media_from_url' => $this->upload_media_from_url($arguments),
             'list_comments' => $this->list_comments($arguments),
             'update_comment_status' => $this->update_comment_status($arguments),
+            'review_geo_post' => $this->review_geo_content('post', $arguments),
+            'review_geo_page' => $this->review_geo_content('page', $arguments),
+            'suggest_post_summary' => $this->suggest_post_summary($arguments),
+            'suggest_internal_links' => $this->suggest_internal_links($arguments),
+            'generate_schema_for_post' => $this->generate_schema_for_content('post', $arguments),
+            'generate_schema_for_page' => $this->generate_schema_for_content('page', $arguments),
+            'append_post_summary' => $this->append_content_summary('post', $arguments),
+            'append_page_summary' => $this->append_content_summary('page', $arguments),
+            'apply_internal_links' => $this->apply_internal_links($arguments),
+            'save_post_schema' => $this->save_content_schema('post', $arguments),
+            'save_page_schema' => $this->save_content_schema('page', $arguments),
+            'get_geo_enhancement_preview' => $this->get_geo_enhancement_preview($arguments),
             default => throw new RuntimeException('Unknown tool: ' . $name),
         };
 
@@ -488,6 +742,41 @@ final class Hermes_MCP_WordPress {
             'content_rendered' => apply_filters('the_content', $post->post_content),
             'modified_gmt' => $post->post_modified_gmt,
             'link' => get_permalink($post),
+        ];
+    }
+
+    private function resolve_content_by_url_or_slug(array $arguments): array {
+        $post = $this->resolve_target_post($arguments);
+        $this->require_capability('edit_post', $post->ID);
+        return $this->summarize_post($post);
+    }
+
+    private function get_content_seo_bundle(array $arguments): array {
+        $post = $this->resolve_target_post($arguments);
+        $this->require_capability('edit_post', $post->ID);
+
+        $featured_media = $this->featured_media_payload($post->ID);
+        $plugin = $this->detect_seo_plugin();
+        $seo = $this->read_seo_fields($post->ID, $plugin, $featured_media, $post);
+
+        return [
+            'id' => $post->ID,
+            'type' => $post->post_type,
+            'status' => $post->post_status,
+            'title' => get_the_title($post),
+            'slug' => $post->post_name,
+            'excerpt' => $post->post_excerpt,
+            'link' => get_permalink($post),
+            'modified_gmt' => $post->post_modified_gmt,
+            'content_raw' => $post->post_content,
+            'content_rendered' => apply_filters('the_content', $post->post_content),
+            'featured_media' => $featured_media,
+            'seo_plugin' => $plugin,
+            'seo' => $seo,
+            'seo_source' => [
+                'plugin' => $plugin,
+                'meta_keys' => $this->seo_meta_map($plugin),
+            ],
         ];
     }
 
@@ -610,6 +899,95 @@ final class Hermes_MCP_WordPress {
         ];
     }
 
+    private function update_seo_fields(array $arguments): array {
+        $id = absint($arguments['id'] ?? 0);
+        if ($id <= 0) {
+            throw new InvalidArgumentException('id is required.');
+        }
+
+        $post = get_post($id);
+        if (!$post instanceof WP_Post) {
+            throw new RuntimeException('Content not found.');
+        }
+
+        $this->require_capability('edit_post', $id);
+
+        $plugin = $this->detect_seo_plugin();
+        $map = $this->seo_meta_map($plugin);
+        if ($map === []) {
+            throw new RuntimeException('No supported SEO plugin detected. Supported plugins in this version: Yoast SEO and Rank Math.');
+        }
+
+        $changed = [];
+        $skipped = [];
+        foreach ($this->allowed_seo_fields() as $field) {
+            if (!array_key_exists($field, $arguments)) {
+                continue;
+            }
+            if (empty($map[$field])) {
+                $skipped[$field] = 'unsupported_for_plugin';
+                continue;
+            }
+
+            $value = $this->sanitize_seo_field_value($field, $arguments[$field]);
+            if ($field === 'robots' && $plugin === 'yoast') {
+                $this->update_yoast_robots_meta($id, $value);
+                $changed[$field] = is_array($value) ? implode(',', $value) : $value;
+                continue;
+            }
+
+            update_post_meta($id, $map[$field], $value);
+            $changed[$field] = $value;
+        }
+
+        return [
+            'id' => $id,
+            'type' => $post->post_type,
+            'status' => get_post_status($id),
+            'seo_plugin' => $plugin,
+            'changed_fields' => $changed,
+            'skipped_fields' => $skipped,
+            'edit_link' => get_edit_post_link($id, 'raw'),
+            'link' => get_permalink($id),
+        ];
+    }
+
+    private function set_featured_media(array $arguments): array {
+        $id = absint($arguments['id'] ?? 0);
+        $media_id = absint($arguments['media_id'] ?? 0);
+        if ($id <= 0 || $media_id <= 0) {
+            throw new InvalidArgumentException('id and media_id are required.');
+        }
+
+        $post = get_post($id);
+        if (!$post instanceof WP_Post) {
+            throw new RuntimeException('Content not found.');
+        }
+
+        $attachment = get_post($media_id);
+        if (!$attachment instanceof WP_Post || $attachment->post_type !== 'attachment') {
+            throw new RuntimeException('media_id must refer to an attachment.');
+        }
+
+        $this->require_capability('edit_post', $id);
+
+        if (!set_post_thumbnail($id, $media_id)) {
+            throw new RuntimeException('Failed to set featured media.');
+        }
+
+        if (array_key_exists('alt_text', $arguments)) {
+            update_post_meta($media_id, '_wp_attachment_image_alt', sanitize_text_field((string) $arguments['alt_text']));
+        }
+
+        return [
+            'id' => $id,
+            'media_id' => $media_id,
+            'media_url' => wp_get_attachment_url($media_id),
+            'edit_link' => get_edit_post_link($id, 'raw'),
+            'link' => get_permalink($id),
+        ];
+    }
+
     private function upload_media_from_url(array $arguments): array {
         $this->require_capability('upload_files');
         $url = esc_url_raw((string) ($arguments['url'] ?? ''));
@@ -701,6 +1079,364 @@ final class Hermes_MCP_WordPress {
         ];
     }
 
+    private function extract_geo_block(string $content, string $class_name): string {
+        $pattern = '/<section\b[^>]*class=(["\'])[^"\']*\b' . preg_quote($class_name, '/') . '\b[^"\']*\1[^>]*>.*?<\/section>/is';
+        if (preg_match($pattern, $content, $matches) !== 1) {
+            return '';
+        }
+        return trim((string) ($matches[0] ?? ''));
+    }
+
+    private function remove_geo_block(string $content, string $class_name): string {
+        $pattern = '/<section\b[^>]*class=(["\'])[^"\']*\b' . preg_quote($class_name, '/') . '\b[^"\']*\1[^>]*>.*?<\/section>/is';
+        return trim((string) preg_replace($pattern, '', $content));
+    }
+
+    private function strip_geo_enhancement_blocks(string $content): string {
+        $without_summary = $this->remove_geo_block($content, 'class9-geo-summary');
+        return $this->remove_geo_block($without_summary, 'class9-geo-links');
+    }
+
+    private function compose_geo_content(string $base_content, string $summary_block = '', string $links_block = ''): string {
+        $parts = array_values(array_filter([
+            trim($base_content),
+            trim($summary_block),
+            trim($links_block),
+        ], static fn($part) => $part !== ''));
+        return implode("\n\n", $parts);
+    }
+
+    private function suggest_content_summary(string $post_type, array $arguments): array {
+        $content = $this->get_content($post_type, $arguments);
+        $base_html = $this->strip_geo_enhancement_blocks((string) ($content['content_rendered'] ?? $content['content_raw'] ?? ''));
+        $plain = $this->plain_text($base_html);
+        $sentences = preg_split('/(?<=[.!?])\s+/', $plain) ?: [];
+        $bullets = [];
+        foreach ($sentences as $sentence) {
+            $sentence = sanitize_text_field(trim((string) $sentence));
+            if ($sentence !== '') {
+                $bullets[] = $sentence;
+            }
+            if (count($bullets) >= 3) {
+                break;
+            }
+        }
+        while (count($bullets) < 3) {
+            $bullets[] = 'Add a clear next step so readers and answer engines understand the intended CTA.';
+        }
+        $bullets = array_values(array_slice($bullets, 0, 3));
+        return [
+            'heading' => 'Quick summary',
+            'style' => sanitize_key((string) ($arguments['style'] ?? 'bullets')) ?: 'bullets',
+            'bullets' => $bullets,
+            'summary_markdown' => "## Quick summary\n" . implode("\n", array_map(static fn($item) => '- ' . $item, $bullets)),
+            'summary_html' => '<section class="class9-geo-summary"><h2>Quick summary</h2><ul>' . implode('', array_map(static fn($item) => '<li>' . esc_html($item) . '</li>', $bullets)) . '</ul></section>',
+        ];
+    }
+
+    private function review_geo_content(string $post_type, array $arguments): array {
+        $content = $this->get_content($post_type, $arguments);
+        $summary = $this->suggest_content_summary($post_type, ['id' => $content['id'], 'style' => $arguments['style'] ?? '']);
+        $links = $this->suggest_internal_links(['id' => $content['id'], 'limit' => $arguments['limit'] ?? 3]);
+        $schema = $this->generate_schema_for_content($post_type, ['id' => $content['id'], 'schema_type' => $arguments['schema_type'] ?? '']);
+        $base_html = $this->strip_geo_enhancement_blocks((string) ($content['content_rendered'] ?? $content['content_raw'] ?? ''));
+        $plain = $this->plain_text($base_html);
+        $word_count = $this->word_count($plain);
+        $heading_count = $this->heading_count($base_html);
+        $issues = [];
+        if ($word_count < 180) {
+            $issues[] = ['severity' => 'medium', 'code' => 'thin_content', 'message' => 'The page is short for a strong answer-engine result.'];
+        }
+        if ($heading_count < 3) {
+            $issues[] = ['severity' => 'medium', 'code' => 'limited_scannability', 'message' => 'Add more structured headings so answer engines can parse subtopics.'];
+        }
+        if (empty($content['excerpt'])) {
+            $issues[] = ['severity' => 'medium', 'code' => 'missing_excerpt', 'message' => 'Add a concise excerpt or summary signal for previews.'];
+        }
+        $overall_score = max(0, min(100, 92 - count($issues) * 10 + min((int) ($links['count'] ?? 0), 3) * 2));
+        return [
+            'id' => $content['id'],
+            'type' => $content['type'],
+            'title' => $content['title'],
+            'overall_score' => $overall_score,
+            'issues' => $issues,
+            'quick_wins' => [
+                'Add a concise summary block near the end of the content.',
+                'Link to 2-3 related service, proof, or pricing pages.',
+                'Prepare review-safe schema JSON-LD for theme or plugin injection.',
+            ],
+            'summary_suggestion' => $summary,
+            'internal_links' => $links,
+            'schema_suggestion' => $schema,
+            'content_metrics' => [
+                'word_count' => $word_count,
+                'heading_count' => $heading_count,
+            ],
+            'existing_enhancements' => [
+                'summary' => $this->extract_geo_block((string) ($content['content_raw'] ?? ''), 'class9-geo-summary') !== '',
+                'links' => $this->extract_geo_block((string) ($content['content_raw'] ?? ''), 'class9-geo-links') !== '',
+            ],
+            'answer_engine_readiness' => $overall_score >= 75 ? 'strong' : ($overall_score >= 55 ? 'developing' : 'needs_work'),
+        ];
+    }
+
+
+
+    private function suggest_post_summary(array $arguments): array {
+        return $this->suggest_content_summary('post', $arguments);
+    }
+
+
+
+    private function suggest_internal_links(array $arguments): array {
+        $id = absint($arguments['id'] ?? 0);
+        if (!$id) {
+            throw new InvalidArgumentException('A valid id is required.');
+        }
+        $post = get_post($id);
+        if (!$post || !($post instanceof WP_Post)) {
+            throw new RuntimeException('Content not found.');
+        }
+        $this->require_capability('edit_post', $id);
+        $limit = min(max(absint($arguments['limit'] ?? 3), 1), 8);
+        $primary_type = $post->post_type;
+        $suggestions = [];
+        foreach (['post', 'page'] as $candidate_type) {
+            $query = new WP_Query([
+                'post_type' => $candidate_type,
+                'posts_per_page' => $limit + 3,
+                'post_status' => 'publish',
+                'post__not_in' => [$id],
+                'orderby' => 'modified',
+                'order' => 'DESC',
+                'no_found_rows' => true,
+            ]);
+            foreach ($query->posts as $candidate) {
+                if (!$candidate instanceof WP_Post || $candidate->ID === $id) {
+                    continue;
+                }
+                $suggestions[] = [
+                    'anchor_text' => sanitize_text_field(get_the_title($candidate)),
+                    'target_url' => get_permalink($candidate),
+                    'reason' => $primary_type === 'page'
+                        ? 'Related proof or supporting page for a service-oriented journey.'
+                        : 'Related page for buyer next steps, supporting proof, or deeper implementation detail.',
+                ];
+                if (count($suggestions) >= $limit) {
+                    break 2;
+                }
+            }
+        }
+        return [
+            'suggestions' => $suggestions,
+            'count' => count($suggestions),
+        ];
+    }
+
+    private function generate_schema_for_content(string $post_type, array $arguments): array {
+        $content = $this->get_content($post_type, $arguments);
+        $schema_type = sanitize_text_field((string) ($arguments['schema_type'] ?? ''));
+        if ($schema_type === '') {
+            $schema_type = $post_type === 'page' ? 'WebPage' : 'Article';
+            if ($post_type === 'page' && stripos($content['title'] ?? '', 'service') !== false) {
+                $schema_type = 'Service';
+            }
+        }
+        return [
+            'id' => $content['id'],
+            'schema_type' => $schema_type,
+            'render_strategy' => 'plugin_meta_jsonld',
+            'renderability_status' => 'saved_to_post_meta',
+            'schema_json' => [
+                '@context' => 'https://schema.org',
+                '@type' => $schema_type,
+                'headline' => $content['title'],
+                'description' => $content['excerpt'],
+                'url' => $content['link'],
+                'mainEntityOfPage' => $content['link'],
+            ],
+        ];
+    }
+
+    private function append_content_summary(string $post_type, array $arguments): array {
+        $content = $this->get_content($post_type, $arguments);
+        $summary = isset($arguments['summary_html']) && is_string($arguments['summary_html']) && trim($arguments['summary_html']) !== ''
+            ? wp_kses_post((string) $arguments['summary_html'])
+            : (string) ($this->suggest_content_summary($post_type, ['id' => $content['id']])['summary_html'] ?? '');
+        $existing_links = $this->extract_geo_block((string) $content['content_raw'], 'class9-geo-links');
+        $base_content = $this->strip_geo_enhancement_blocks((string) $content['content_raw']);
+        $updated = $this->update_content($post_type, [
+            'id' => $content['id'],
+            'content' => $this->compose_geo_content($base_content, $summary, $existing_links),
+        ]);
+        return [
+            'id' => $content['id'],
+            'tool' => $post_type === 'page' ? 'append_page_summary' : 'append_post_summary',
+            'summary_html' => $summary,
+            'replaced_existing' => $this->extract_geo_block((string) $content['content_raw'], 'class9-geo-summary') !== '',
+            'status' => $updated['status'] ?? get_post_status($content['id']),
+            'modified_gmt' => $updated['modified_gmt'] ?? get_post($content['id'])->post_modified_gmt,
+        ];
+    }
+
+
+
+    private function apply_internal_links(array $arguments): array {
+        $id = absint($arguments['id'] ?? 0);
+        if (!$id) {
+            throw new InvalidArgumentException('A valid id is required.');
+        }
+        $post = get_post($id);
+        if (!$post || !($post instanceof WP_Post)) {
+            throw new RuntimeException('Content not found.');
+        }
+        $this->require_capability('edit_post', $id);
+        $suggestions = isset($arguments['suggestions']) && is_array($arguments['suggestions'])
+            ? $arguments['suggestions']
+            : (array) ($this->suggest_internal_links(['id' => $id, 'limit' => 3])['suggestions'] ?? []);
+        $items = [];
+        foreach ($suggestions as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $anchor = sanitize_text_field((string) ($item['anchor_text'] ?? 'Related page'));
+            $url = esc_url_raw((string) ($item['target_url'] ?? ''));
+            if ($url === '') {
+                continue;
+            }
+            $items[] = '<li><a href="' . esc_url($url) . '">' . esc_html($anchor) . '</a></li>';
+        }
+        if ($items === []) {
+            throw new RuntimeException('No valid internal-link suggestions were provided.');
+        }
+        $block = '<section class="class9-geo-links"><h2>Suggested next links</h2><ul>' . implode('', $items) . '</ul></section>';
+        $existing_summary = $this->extract_geo_block((string) $post->post_content, 'class9-geo-summary');
+        $base_content = $this->strip_geo_enhancement_blocks((string) $post->post_content);
+        $updated = $this->update_content($post->post_type, [
+            'id' => $id,
+            'content' => $this->compose_geo_content($base_content, $existing_summary, $block),
+        ]);
+        return [
+            'id' => $id,
+            'tool' => 'apply_internal_links',
+            'link_count' => count($items),
+            'applied_html' => $block,
+            'replaced_existing' => $this->extract_geo_block((string) $post->post_content, 'class9-geo-links') !== '',
+            'status' => $updated['status'] ?? get_post_status($id),
+            'modified_gmt' => $updated['modified_gmt'] ?? get_post($id)->post_modified_gmt,
+        ];
+    }
+
+
+
+    private function save_content_schema(string $post_type, array $arguments): array {
+        $content = $this->get_content($post_type, $arguments);
+        $schema = isset($arguments['schema_json']) && is_array($arguments['schema_json'])
+            ? $arguments['schema_json']
+            : (array) ($this->generate_schema_for_content($post_type, $arguments)['schema_json'] ?? []);
+        $schema_type = sanitize_text_field((string) ($arguments['schema_type'] ?? ($schema['@type'] ?? '')));
+        if ($schema_type !== '' && empty($schema['@type'])) {
+            $schema['@type'] = $schema_type;
+        }
+        if (empty($schema['@context'])) {
+            $schema['@context'] = 'https://schema.org';
+        }
+        update_post_meta($content['id'], self::GEO_SCHEMA_META_KEY, wp_json_encode($schema, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        return [
+            'id' => $content['id'],
+            'tool' => $post_type === 'page' ? 'save_page_schema' : 'save_post_schema',
+            'render_strategy' => 'plugin_meta_jsonld',
+            'renderability_status' => 'saved_to_post_meta',
+            'meta_key' => self::GEO_SCHEMA_META_KEY,
+            'schema_json' => $schema,
+        ];
+    }
+
+    private function get_geo_enhancement_preview(array $arguments): array {
+        $id = absint($arguments['id'] ?? 0);
+        if (!$id) {
+            throw new InvalidArgumentException('A valid id is required.');
+        }
+        $post = get_post($id);
+        if (!$post || !($post instanceof WP_Post)) {
+            throw new RuntimeException('Content not found.');
+        }
+        $post_type = $post->post_type === 'page' ? 'page' : 'post';
+        $content = $this->get_content($post_type, ['id' => $id]);
+        $summary = $this->suggest_content_summary($post_type, ['id' => $id]);
+        $links = $this->suggest_internal_links(['id' => $id, 'limit' => 3]);
+        $schema = $this->generate_schema_for_content($post_type, ['id' => $id]);
+        $linkItems = [];
+        foreach ((array) ($links['suggestions'] ?? []) as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $url = esc_url_raw((string) ($item['target_url'] ?? ''));
+            if ($url === '') {
+                continue;
+            }
+            $anchor = sanitize_text_field((string) ($item['anchor_text'] ?? 'Related page'));
+            $linkItems[] = '<li><a href="' . esc_url($url) . '">' . esc_html($anchor) . '</a></li>';
+        }
+        $linkBlock = $linkItems === [] ? '' : '<section class="class9-geo-links"><h2>Suggested next links</h2><ul>' . implode('', $linkItems) . '</ul></section>';
+        $before = (string) ($content['content_rendered'] ?? $content['content_raw'] ?? '');
+        $base = $this->strip_geo_enhancement_blocks($before);
+        $after = $this->compose_geo_content($base, (string) ($summary['summary_html'] ?? ''), $linkBlock);
+        $diff = [
+            '--- before.html',
+            '+++ after.html',
+            '+' . trim((string) ($summary['summary_html'] ?? '')),
+            '+' . trim($linkBlock),
+        ];
+        return [
+            'id' => $id,
+            'type' => $post_type,
+            'before_html' => $before,
+            'after_html' => $after,
+            'existing_summary_detected' => $this->extract_geo_block($before, 'class9-geo-summary') !== '',
+            'existing_links_detected' => $this->extract_geo_block($before, 'class9-geo-links') !== '',
+            'diff_markdown' => implode("\n", array_filter($diff)),
+            'schema_handoff' => $schema,
+        ];
+    }
+
+
+
+    public function render_saved_geo_schema(): void {
+        if (!is_singular()) {
+            return;
+        }
+        $post = get_queried_object();
+        if (!$post instanceof WP_Post) {
+            return;
+        }
+        $schema_json = get_post_meta($post->ID, self::GEO_SCHEMA_META_KEY, true);
+        if (!is_string($schema_json) || trim($schema_json) === '') {
+            return;
+        }
+        $decoded = json_decode($schema_json, true);
+        if (!is_array($decoded)) {
+            return;
+        }
+        echo "\n<script type=\"application/ld+json\">" . wp_json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "</script>\n";
+    }
+
+    private function plain_text(string $content): string {
+        $text = wp_strip_all_tags($content, true);
+        $text = preg_replace('/\s+/', ' ', (string) $text);
+        return trim((string) $text);
+    }
+
+    private function word_count(string $content): int {
+        preg_match_all("/\\b[\\p{L}\\p{N}_\\-']+\\b/u", $content, $matches);
+        return count($matches[0]);
+    }
+
+    private function heading_count(string $content): int {
+        preg_match_all('/<h[1-6][^>]*>/i', $content, $matches);
+        return count($matches[0]);
+    }
+
     private function summarize_post(WP_Post $post): array {
         return [
             'id' => $post->ID,
@@ -712,6 +1448,222 @@ final class Hermes_MCP_WordPress {
             'parent' => $post->post_parent,
             'link' => get_permalink($post),
         ];
+    }
+
+    private function resolve_target_post(array $arguments): WP_Post {
+        $id = absint($arguments['id'] ?? 0);
+        if ($id > 0) {
+            $post = get_post($id);
+            if ($post instanceof WP_Post) {
+                return $post;
+            }
+            throw new RuntimeException('Content not found.');
+        }
+
+        $post_type = isset($arguments['post_type']) ? sanitize_key((string) $arguments['post_type']) : 'any';
+        if (!in_array($post_type, ['any', 'page', 'post'], true)) {
+            throw new InvalidArgumentException('post_type must be any, page, or post.');
+        }
+
+        $url = isset($arguments['url']) ? esc_url_raw((string) $arguments['url']) : '';
+        $slug = isset($arguments['slug']) ? sanitize_title((string) $arguments['slug']) : '';
+        if ($url === '' && $slug === '') {
+            throw new InvalidArgumentException('Provide id, url, or slug.');
+        }
+
+        if ($url !== '') {
+            $resolved_id = url_to_postid($url);
+            if ($resolved_id > 0) {
+                $post = get_post($resolved_id);
+                if ($post instanceof WP_Post && ($post_type === 'any' || $post->post_type === $post_type)) {
+                    return $post;
+                }
+            }
+        }
+
+        if ($slug !== '') {
+            $candidates = get_posts([
+                'name' => $slug,
+                'post_type' => $post_type === 'any' ? ['page', 'post'] : [$post_type],
+                'post_status' => ['publish', 'draft', 'pending', 'private', 'future'],
+                'numberposts' => 5,
+                'orderby' => 'modified',
+                'order' => 'DESC',
+                'suppress_filters' => false,
+            ]);
+            if (!empty($candidates[0]) && $candidates[0] instanceof WP_Post) {
+                return $candidates[0];
+            }
+        }
+
+        throw new RuntimeException('Unable to resolve content from the supplied id, url, or slug.');
+    }
+
+    private function detect_seo_plugin(): string {
+        if (defined('WPSEO_VERSION') || class_exists('WPSEO_Frontend')) {
+            return 'yoast';
+        }
+        if (defined('RANK_MATH_VERSION') || class_exists('RankMath')) {
+            return 'rank_math';
+        }
+        return 'none';
+    }
+
+    private function seo_meta_map(string $plugin): array {
+        return match ($plugin) {
+            'yoast' => [
+                'seo_title' => '_yoast_wpseo_title',
+                'meta_description' => '_yoast_wpseo_metadesc',
+                'canonical_url' => '_yoast_wpseo_canonical',
+                'robots' => '_yoast_wpseo_meta-robots-noindex',
+                'og_title' => '_yoast_wpseo_opengraph-title',
+                'og_description' => '_yoast_wpseo_opengraph-description',
+                'og_image' => '_yoast_wpseo_opengraph-image',
+                'twitter_title' => '_yoast_wpseo_twitter-title',
+                'twitter_description' => '_yoast_wpseo_twitter-description',
+                'twitter_image' => '_yoast_wpseo_twitter-image',
+                'focus_keyword' => '_yoast_wpseo_focuskw',
+            ],
+            'rank_math' => [
+                'seo_title' => 'rank_math_title',
+                'meta_description' => 'rank_math_description',
+                'canonical_url' => 'rank_math_canonical_url',
+                'robots' => 'rank_math_robots',
+                'og_title' => 'rank_math_facebook_title',
+                'og_description' => 'rank_math_facebook_description',
+                'og_image' => 'rank_math_facebook_image',
+                'twitter_title' => 'rank_math_twitter_title',
+                'twitter_description' => 'rank_math_twitter_description',
+                'twitter_image' => 'rank_math_twitter_image',
+                'focus_keyword' => 'rank_math_focus_keyword',
+            ],
+            default => [],
+        };
+    }
+
+    private function allowed_seo_fields(): array {
+        return [
+            'seo_title',
+            'meta_description',
+            'canonical_url',
+            'robots',
+            'og_title',
+            'og_description',
+            'og_image',
+            'twitter_title',
+            'twitter_description',
+            'twitter_image',
+            'focus_keyword',
+        ];
+    }
+
+    private function read_seo_fields(int $post_id, string $plugin, array $featured_media, WP_Post $post): array {
+        $map = $this->seo_meta_map($plugin);
+        $seo = [
+            'seo_title' => '',
+            'meta_description' => '',
+            'canonical_url' => '',
+            'robots' => '',
+            'og_title' => '',
+            'og_description' => '',
+            'og_image' => '',
+            'twitter_title' => '',
+            'twitter_description' => '',
+            'twitter_image' => '',
+            'focus_keyword' => '',
+        ];
+
+        foreach ($map as $field => $meta_key) {
+            if ($field === 'robots' && $plugin === 'yoast') {
+                $seo[$field] = $this->read_yoast_robots_meta($post_id);
+                continue;
+            }
+            $value = get_post_meta($post_id, $meta_key, true);
+            if (is_array($value)) {
+                $value = implode(',', array_map('strval', $value));
+            }
+            $seo[$field] = is_scalar($value) ? (string) $value : '';
+        }
+
+        if ($seo['seo_title'] === '') {
+            $seo['seo_title'] = get_the_title($post);
+        }
+        if ($seo['meta_description'] === '') {
+            $seo['meta_description'] = $post->post_excerpt;
+        }
+        if ($seo['canonical_url'] === '') {
+            $seo['canonical_url'] = (string) get_permalink($post);
+        }
+        if ($seo['og_title'] === '') {
+            $seo['og_title'] = $seo['seo_title'];
+        }
+        if ($seo['og_description'] === '') {
+            $seo['og_description'] = $seo['meta_description'];
+        }
+        if ($seo['twitter_title'] === '') {
+            $seo['twitter_title'] = $seo['seo_title'];
+        }
+        if ($seo['twitter_description'] === '') {
+            $seo['twitter_description'] = $seo['meta_description'];
+        }
+        if ($seo['og_image'] === '' && !empty($featured_media['url'])) {
+            $seo['og_image'] = (string) $featured_media['url'];
+        }
+        if ($seo['twitter_image'] === '' && !empty($featured_media['url'])) {
+            $seo['twitter_image'] = (string) $featured_media['url'];
+        }
+        if ($seo['robots'] === '') {
+            $seo['robots'] = 'index,follow';
+        }
+
+        return $seo;
+    }
+
+    private function featured_media_payload(int $post_id): array {
+        $media_id = get_post_thumbnail_id($post_id);
+        if ($media_id <= 0) {
+            return [
+                'id' => 0,
+                'url' => '',
+                'alt_text' => '',
+            ];
+        }
+
+        return [
+            'id' => $media_id,
+            'url' => (string) wp_get_attachment_url($media_id),
+            'alt_text' => (string) get_post_meta($media_id, '_wp_attachment_image_alt', true),
+        ];
+    }
+
+    private function sanitize_seo_field_value(string $field, mixed $value): string|array {
+        if ($field === 'robots') {
+            if (is_array($value)) {
+                return array_values(array_filter(array_map('sanitize_key', $value)));
+            }
+            $tokens = array_filter(array_map('trim', explode(',', (string) $value)));
+            return implode(',', array_map('sanitize_key', $tokens));
+        }
+
+        if (in_array($field, ['canonical_url', 'og_image', 'twitter_image'], true)) {
+            return esc_url_raw((string) $value);
+        }
+
+        return sanitize_text_field((string) $value);
+    }
+
+    private function read_yoast_robots_meta(int $post_id): string {
+        $noindex = (string) get_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', true);
+        $nofollow = (string) get_post_meta($post_id, '_yoast_wpseo_meta-robots-nofollow', true);
+
+        return ($noindex === '1' ? 'noindex' : 'index') . ',' . ($nofollow === '1' ? 'nofollow' : 'follow');
+    }
+
+    private function update_yoast_robots_meta(int $post_id, string|array $value): void {
+        $robots = is_array($value) ? implode(',', $value) : (string) $value;
+        $tokens = array_flip(array_filter(array_map('trim', explode(',', $robots))));
+        update_post_meta($post_id, '_yoast_wpseo_meta-robots-noindex', isset($tokens['noindex']) ? '1' : '0');
+        update_post_meta($post_id, '_yoast_wpseo_meta-robots-nofollow', isset($tokens['nofollow']) ? '1' : '0');
     }
 
     private function require_capability(string $capability, int $object_id = 0): void {

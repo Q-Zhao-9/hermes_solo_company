@@ -39,6 +39,10 @@ class TestFalCatalog:
     def test_default_model_in_catalog(self, image_tool):
         assert image_tool.DEFAULT_MODEL in image_tool.FAL_MODELS
 
+    def test_recraft_catalog_uses_v4_1_standard_only(self, image_tool):
+        assert "fal-ai/recraft/v4.1/text-to-image" in image_tool.FAL_MODELS
+        assert "fal-ai/recraft/v4/pro/text-to-image" not in image_tool.FAL_MODELS
+
     def test_all_entries_have_required_keys(self, image_tool):
         required = {
             "display", "speed", "strengths", "price",
@@ -207,9 +211,10 @@ class TestSupportsFilter:
         assert "num_inference_steps" not in p
 
     def test_recraft_has_minimal_payload(self, image_tool):
-        # Recraft V4 Pro supports prompt, image_size, enable_safety_checker,
-        # colors, background_color (no seed, no style — V4 dropped V3's style enum).
-        p = image_tool._build_fal_payload("fal-ai/recraft/v4/pro/text-to-image", "hi", "landscape")
+        # Recraft V4.1 standard supports prompt, image_size,
+        # enable_safety_checker, colors, background_color
+        # (no seed, no style — V4+ dropped V3's style enum).
+        p = image_tool._build_fal_payload("fal-ai/recraft/v4.1/text-to-image", "hi", "landscape")
         assert set(p.keys()) <= {
             "prompt", "image_size", "enable_safety_checker",
             "colors", "background_color",

@@ -26,7 +26,7 @@ ${HERMES_HOME:-$HOME/.hermes}/tools
 ${HERMES_HOME:-$HOME/.hermes}/skills
 ```
 
-The installer copies both reusable tools under `modules/` and Easiio-specific skills under `skills/`, including the Class 4 Skill Studio skills and the Class 7 Brand Studio skills.
+The installer copies both reusable tools under `modules/` and Easiio-specific skills under `skills/`, including the Class 4 Skill Studio skills, the core Class 8 SEO skills, and the Class 7 Brand Studio skills.
 
 Dry run first:
 
@@ -44,6 +44,10 @@ Install only one skill:
 
 ```bash
 scripts/install_easiio_modules.sh --skill class4/student-lead-followup
+scripts/install_easiio_modules.sh --skill class8/keyword-research-skill
+scripts/install_easiio_modules.sh --skill class8/seo-audit-skill
+scripts/install_easiio_modules.sh --skill class8/seo-brief-skill
+scripts/install_easiio_modules.sh --skill class8/seo-article-writer-skill
 ```
 
 Install modules only, without skills:

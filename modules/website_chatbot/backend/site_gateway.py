@@ -143,7 +143,27 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "name": "student-lead-followup",
             "template": Path("class4/student-lead-followup/SKILL.md"),
             "description": "Student local copy of the Class 4 lead follow-up skill",
-        }
+        },
+        "class8/keyword-research-skill": {
+            "name": "keyword-research-skill",
+            "template": Path("class8/keyword-research-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 keyword research skill",
+        },
+        "class8/seo-audit-skill": {
+            "name": "seo-audit-skill",
+            "template": Path("class8/seo-audit-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 SEO audit skill",
+        },
+        "class8/seo-brief-skill": {
+            "name": "seo-brief-skill",
+            "template": Path("class8/seo-brief-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 SEO brief skill",
+        },
+        "class8/seo-article-writer-skill": {
+            "name": "seo-article-writer-skill",
+            "template": Path("class8/seo-article-writer-skill/SKILL.md"),
+            "description": "Student local copy of the Class 8 SEO article writer skill",
+        },
     }
     admin_email = "jian.lin@easiio.com"
     admin_password = ""
@@ -171,7 +191,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
 
     def _send_json(self, status: int, payload: dict, headers: dict[str, str] | None = None) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -190,11 +210,44 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
-    def _current_user(self) -> dict | None:
+    def _authorization_token(self) -> str:
+        header = self.headers.get("Authorization", "").strip()
+        if header.lower().startswith("bearer "):
+            return header[7:].strip()
+        return ""
+
+    def _current_session_token(self) -> str | None:
+        auth_token = self._authorization_token()
+        if auth_token:
+            return auth_token
         cookie_header = self.headers.get("Cookie", "")
         cookies = http.cookies.SimpleCookie(cookie_header)
         morsel = cookies.get(SESSION_COOKIE)
-        if not morsel:
+        if morsel and morsel.value:
+            return morsel.value
+        return None
+
+    def _session_payload(self, user_row: sqlite3.Row, *, include_token: bool = False) -> tuple[dict, str]:
+        token = secrets.token_urlsafe(32)
+        now = int(time.time())
+        with db_connect(self.auth_db_path) as conn:
+            conn.execute(
+                "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                (token, user_row["id"], now, now + SESSION_TTL_SECONDS),
+            )
+            conn.commit()
+        payload = {
+            "ok": True,
+            "user": {"email": user_row["email"], "role": user_row["role"]},
+            "expires_at": now + SESSION_TTL_SECONDS,
+        }
+        if include_token:
+            payload["token"] = token
+        return payload, token
+
+    def _current_user(self) -> dict | None:
+        token = self._current_session_token()
+        if not token:
             return None
         now = int(time.time())
         with db_connect(self.auth_db_path) as conn:
@@ -205,7 +258,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
                 JOIN users ON users.id = sessions.user_id
                 WHERE sessions.token = ? AND sessions.expires_at > ?
                 """,
-                (morsel.value, now),
+                (token, now),
             ).fetchone()
         return dict(row) if row else None
 
@@ -228,6 +281,13 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Location", f"login.html?next={urllib.parse.quote(next_page)}")
         self.end_headers()
 
+    def _authenticate_credentials(self, email: str, password: str) -> sqlite3.Row | None:
+        with db_connect(self.auth_db_path) as conn:
+            user = conn.execute("SELECT id, email, role, password_hash FROM users WHERE email = ?", (email,)).fetchone()
+        if not user or not verify_password(password, user["password_hash"]):
+            return None
+        return user
+
     def _handle_login(self) -> None:
         try:
             payload = self._read_json()
@@ -236,28 +296,32 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             return
         email = str(payload.get("email") or "").strip().lower()
         password = str(payload.get("password") or "")
-        with db_connect(self.auth_db_path) as conn:
-            user = conn.execute("SELECT id, email, role, password_hash FROM users WHERE email = ?", (email,)).fetchone()
-            if not user or not verify_password(password, user["password_hash"]):
-                self._send_json(401, {"ok": False, "error": "invalid_credentials"})
-                return
-            token = secrets.token_urlsafe(32)
-            now = int(time.time())
-            conn.execute(
-                "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-                (token, user["id"], now, now + SESSION_TTL_SECONDS),
-            )
-            conn.commit()
+        user = self._authenticate_credentials(email, password)
+        if not user:
+            self._send_json(401, {"ok": False, "error": "invalid_credentials"})
+            return
+        response_payload, token = self._session_payload(user)
         cookie = http.cookies.SimpleCookie()
         cookie[SESSION_COOKIE] = token
         cookie[SESSION_COOKIE]["path"] = "/"
         cookie[SESSION_COOKIE]["httponly"] = True
         cookie[SESSION_COOKIE]["samesite"] = "Lax"
-        self._send_json(
-            200,
-            {"ok": True, "user": {"email": user["email"], "role": user["role"]}},
-            {"Set-Cookie": cookie.output(header="").strip()},
-        )
+        self._send_json(200, response_payload, {"Set-Cookie": cookie.output(header="").strip()})
+
+    def _handle_mobile_login(self) -> None:
+        try:
+            payload = self._read_json()
+        except Exception:
+            self._send_json(400, {"ok": False, "error": "invalid_json"})
+            return
+        email = str(payload.get("email") or "").strip().lower()
+        password = str(payload.get("password") or "")
+        user = self._authenticate_credentials(email, password)
+        if not user:
+            self._send_json(401, {"ok": False, "error": "invalid_credentials"})
+            return
+        response_payload, _token = self._session_payload(user, include_token=True)
+        self._send_json(200, response_payload)
 
     def _handle_change_password(self) -> None:
         user = self._require_logged_in()
@@ -290,19 +354,31 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         self._send_json(200, {"ok": True, "user": {"email": user["email"], "role": user["role"]}})
 
     def _handle_logout(self) -> None:
-        cookie_header = self.headers.get("Cookie", "")
-        cookies = http.cookies.SimpleCookie(cookie_header)
-        token = cookies.get(SESSION_COOKIE)
+        token = self._current_session_token()
         if token:
             with db_connect(self.auth_db_path) as conn:
-                conn.execute("DELETE FROM sessions WHERE token = ?", (token.value,))
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
                 conn.commit()
         self._send_json(200, {"ok": True}, {"Set-Cookie": f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+
+    def _handle_mobile_logout(self) -> None:
+        token = self._authorization_token()
+        if token:
+            with db_connect(self.auth_db_path) as conn:
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                conn.commit()
+        self._send_json(200, {"ok": True})
 
     def _handle_me(self) -> None:
         user = self._current_user()
         if not user:
             self._send_json(401, {"ok": False, "error": "login_required"})
+            return
+        self._send_json(200, {"ok": True, "user": {"email": user["email"], "role": user["role"]}})
+
+    def _handle_mobile_me(self) -> None:
+        user = self._require_admin()
+        if not user:
             return
         self._send_json(200, {"ok": True, "user": {"email": user["email"], "role": user["role"]}})
 
@@ -479,20 +555,27 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
     def _crm_rows(self, conn: sqlite3.Connection, query: str, params: tuple = ()) -> list[dict]:
         return [dict(row) for row in conn.execute(query, params).fetchall()]
 
-    def _handle_admin_crm(self) -> None:
-        if not self._require_admin():
-            return
-        query = parse_qs(urllib.parse.urlparse(self.path).query)
-        site_id = str((query.get("site_id") or ["ai-solo-company-class"])[0] or "ai-solo-company-class")[:100]
-        try:
-            limit = max(1, min(int((query.get("limit") or [50])[0]), 100))
-        except Exception:
-            limit = 50
+    def _build_owner_crm_payload(self, site_id: str, limit: int) -> dict:
         crm = SoloCRM(self.crm_db_path)
         summary = crm.website_summary(site_id=site_id)
         customers = crm.list_website_customers(site_id=site_id, limit=limit)
         visitors = crm.list_website_visitors(site_id=site_id, limit=limit)
         with crm.connect() as conn:
+            followups = self._crm_rows(
+                conn,
+                """
+                SELECT activities.*, contacts.name AS contact_name, contacts.email AS contact_email,
+                       deals.title AS deal_title, websites.site_id, websites.name AS website_name
+                FROM activities
+                LEFT JOIN contacts ON contacts.id = activities.contact_id
+                LEFT JOIN deals ON deals.id = activities.deal_id
+                LEFT JOIN websites ON websites.id = activities.website_id
+                WHERE websites.site_id = ? AND activities.follow_up_at != '' AND activities.completed = 0
+                ORDER BY activities.follow_up_at ASC, activities.id ASC
+                LIMIT ?
+                """,
+                (site_id, limit),
+            )
             submissions = self._crm_rows(
                 conn,
                 """
@@ -545,8 +628,9 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "submissions": len(submissions),
             "visitors": summary.get("visitors", len(visitors)),
             "open_deals": summary.get("open_deals", len([deal for deal in deals if deal.get("stage") not in {"won", "lost"}])),
+            "due_followups": len(followups),
         }
-        self._send_json(200, {
+        return {
             "ok": True,
             "site_id": site_id,
             "summary": summary,
@@ -555,7 +639,41 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "visitors": visitors,
             "visits": visits,
             "deals": deals,
-        })
+            "followups": followups,
+        }
+
+    def _handle_admin_crm(self) -> None:
+        if not self._require_admin():
+            return
+        query = parse_qs(urllib.parse.urlparse(self.path).query)
+        site_id = str((query.get("site_id") or ["ai-solo-company-class"])[0] or "ai-solo-company-class")[:100]
+        try:
+            limit = max(1, min(int((query.get("limit") or [50])[0]), 100))
+        except Exception:
+            limit = 50
+        self._send_json(200, self._build_owner_crm_payload(site_id, limit))
+
+    def _handle_mobile_crm_summary(self) -> None:
+        if not self._require_admin():
+            return
+        query = parse_qs(urllib.parse.urlparse(self.path).query)
+        site_id = str((query.get("site_id") or ["ai-solo-company-class"])[0] or "ai-solo-company-class")[:100]
+        try:
+            limit = max(1, min(int((query.get("limit") or [10])[0]), 25))
+        except Exception:
+            limit = 10
+        payload = self._build_owner_crm_payload(site_id, limit)
+        compact = {
+            "ok": True,
+            "site_id": site_id,
+            "summary": payload["summary"],
+            "top_customers": payload["customers"][:5],
+            "recent_submissions": payload["submissions"][:5],
+            "recent_visitors": payload["visitors"][:5],
+            "recent_deals": payload["deals"][:5],
+            "next_followups": payload["followups"][:5],
+        }
+        self._send_json(200, compact)
 
     def _proxy_wiki(self) -> None:
         path = self.path.split("?", 1)[0]
@@ -620,9 +738,7 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
             "updated_at": int(path.stat().st_mtime) if path.exists() else 0,
         }
 
-    def _handle_skills_list(self) -> None:
-        if not self._require_admin():
-            return
+    def _collect_admin_skills(self) -> list[dict]:
         roots = [self.skills_root.expanduser().resolve(), self.site_skill_docs_root.expanduser().resolve()]
         skills = []
         for root in roots:
@@ -633,6 +749,29 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
                 if safe:
                     skills.append(self._skill_summary(safe))
         skills.sort(key=lambda item: (item.get("category", ""), item.get("name", "")))
+        return skills
+
+    def _handle_skills_list(self) -> None:
+        if not self._require_admin():
+            return
+        self._send_json(200, {"ok": True, "skills": self._collect_admin_skills()})
+
+    def _handle_mobile_skills_list(self) -> None:
+        if not self._require_admin():
+            return
+        skills = []
+        for item in self._collect_admin_skills():
+            skills.append(
+                {
+                    "id": item.get("relative_path", item.get("path", item.get("name", "skill"))).replace("/SKILL.md", ""),
+                    "name": item.get("name", "skill"),
+                    "category": item.get("category", "general"),
+                    "short_description": item.get("description", ""),
+                    "tags": [part for part in str(item.get("category", "")).replace("/", "-").split("-") if part],
+                    "updated_at": item.get("updated_at", 0),
+                    "source": "live",
+                }
+            )
         self._send_json(200, {"ok": True, "skills": skills})
 
     def _handle_skill_file_get(self) -> None:
@@ -860,7 +999,196 @@ class GatewayHandler(http.server.SimpleHTTPRequestHandler):
         score = max(1, min(score, 5))
         return score, "; ".join(reasons) if reasons else "Need, budget, and timeline need more clarification."
 
-    def _render_student_skill_test_output(self, skill_text: str, sample_input: str) -> dict:
+    @staticmethod
+    def _render_class8_keyword_research_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        business = details.get("business") or details.get("company") or "Unknown"
+        offer = details.get("offer") or details.get("service") or "Unknown"
+        audience = details.get("audience") or "Unknown"
+        region = details.get("region") or "Unknown"
+        topic = details.get("topic") or offer
+        seeds_raw = details.get("seed_keywords") or details.get("keywords") or details.get("seed keywords") or ""
+        seed_keywords = [item.strip() for item in str(seeds_raw).split(",") if item.strip()]
+        if not seed_keywords:
+            seed_keywords = [
+                item
+                for item in [topic, f"{offer} {region}".strip(), f"{offer} for {audience}".strip()]
+                if item and item != "Unknown"
+            ][:3]
+        primary_keyword = seed_keywords[0] if seed_keywords else f"{topic} {region}".strip()
+        supporting_keywords = seed_keywords[1:] or [
+            f"{topic} checklist",
+            f"{offer} pricing",
+            f"{business} {offer}".strip(),
+        ]
+        output = f"""## Keyword research brief
+- Business: {business}
+- Offer: {offer}
+- Audience: {audience}
+- Region: {region}
+- Topic: {topic}
+
+## Seed keywords
+{chr(10).join(f'- {item}' for item in seed_keywords)}
+
+## Search intent hypothesis
+- Primary keyword: {primary_keyword}
+- Intent: Use a {style['tone']} tone for buyers researching {offer} in {region}.
+
+## Suggested content angle
+- Build a practical Class 8 brief around {primary_keyword}.
+- Supporting keywords: {', '.join(supporting_keywords)}
+- CTA: Invite the reader to request the next step or review the offer.
+
+## Next action
+Run the keyword research section first, then turn the winning angle into the full SEO brief packet.
+"""
+        checklist = [
+            {"label": "Keyword research brief section present", "passed": "## Keyword research brief" in output},
+            {"label": "Seed keywords section present", "passed": "## Seed keywords" in output},
+            {"label": "Search intent hypothesis present", "passed": "## Search intent hypothesis" in output},
+            {"label": "Suggested content angle present", "passed": "## Suggested content angle" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+            {"label": "At least one seed keyword is available", "passed": bool(seed_keywords)},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    @staticmethod
+    def _render_class8_audit_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        site_url = details.get("site_url") or details.get("url") or "https://example.com"
+        page_type = details.get("page_type") or "service page"
+        topic = details.get("topic") or details.get("offer") or "AI website launch support"
+        output = f"""## Audit summary
+- URL: {site_url}
+- Page type: {page_type}
+- Topic: {topic}
+- Review mode: classroom-safe single-page SEO audit
+
+## Strengths
+- The page topic is explicit enough to support a focused SEO improvement pass.
+- The audit tone should stay {style['tone']} and review-safe for students.
+
+## Issues found
+- Missing or weak meta description
+- Heading structure needs a clearer H1/H2 hierarchy
+- Internal links should point to the most relevant conversion pages
+- Image alt text and schema opportunities need review
+
+## Recommended fixes
+- Rewrite the title and meta description around one stronger search intent.
+- Tighten the H1 and add supporting H2 sections.
+- Add one CTA, one FAQ block, and one schema recommendation.
+
+## Next action
+Save this audit first, then turn the top issue into a Class 8 SEO brief.
+"""
+        checklist = [
+            {"label": "Audit summary section present", "passed": "## Audit summary" in output},
+            {"label": "Strengths section present", "passed": "## Strengths" in output},
+            {"label": "Issues found section present", "passed": "## Issues found" in output},
+            {"label": "Recommended fixes section present", "passed": "## Recommended fixes" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    @staticmethod
+    def _render_class8_brief_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        business = details.get("business") or details.get("company") or "Unknown"
+        topic = details.get("topic") or details.get("offer") or "AI website launch"
+        primary_keyword = details.get("primary_keyword") or details.get("seed_keywords") or topic
+        output = f"""## Brief objective
+- Business: {business}
+- Topic: {topic}
+- Primary keyword: {primary_keyword}
+- Tone: {style['tone']}
+
+## Selected brief
+- SEO title: {topic.title()} | {business}
+- Meta description: Practical guidance for buyers researching {topic}.
+- Search intent: Commercial investigative
+- CTA: Book a planning call
+
+## Outline
+- Problem and buyer context
+- Solution options and proof
+- FAQ
+- Conversion CTA
+
+## Internal links
+- Pricing or service page
+- Case study or proof page
+- Contact / booking page
+
+## Next action
+Use this brief to generate one full Class 8 article draft before any WordPress publishing step.
+"""
+        checklist = [
+            {"label": "Brief objective section present", "passed": "## Brief objective" in output},
+            {"label": "Selected brief section present", "passed": "## Selected brief" in output},
+            {"label": "Outline section present", "passed": "## Outline" in output},
+            {"label": "Internal links section present", "passed": "## Internal links" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    @staticmethod
+    def _render_class8_article_test_output(skill_text: str, sample_input: str) -> dict:
+        details = GatewayHandler._parse_student_lead_input(sample_input)
+        style = GatewayHandler._infer_student_skill_style(skill_text)
+        business = details.get("business") or details.get("company") or "Unknown"
+        topic = details.get("topic") or details.get("offer") or "AI website launch"
+        output = f"""## Article brief recap
+- Business: {business}
+- Topic: {topic}
+- Writing mode: review-safe Class 8 article draft
+
+## Full article draft
+# {topic.title()}
+
+## Introduction
+This draft uses a {style['tone']} tone and stays practical for real buyers.
+
+## Main section
+Explain the problem, the buyer questions, the recommended approach, and the CTA.
+
+## FAQ
+- What should a buyer do first?
+- How should they evaluate the offer?
+
+## CTA
+Invite the reader to book the next planning step.
+
+## On-page SEO checklist
+- Primary keyword appears in the title and introduction
+- CTA is visible
+- FAQ section exists
+- Draft is ready for human review
+
+## Next action
+Review the article, then convert it into a WordPress-safe draft handoff.
+"""
+        checklist = [
+            {"label": "Article brief recap section present", "passed": "## Article brief recap" in output},
+            {"label": "Full article draft section present", "passed": "## Full article draft" in output},
+            {"label": "On-page SEO checklist section present", "passed": "## On-page SEO checklist" in output},
+            {"label": "Next action section present", "passed": "## Next action" in output},
+        ]
+        return {"output": output, "checklist": checklist, "style": style, "parsed_input": details}
+
+    def _render_student_skill_test_output(self, skill_id: str, skill_text: str, sample_input: str) -> dict:
+        if skill_id == "class8/keyword-research-skill":
+            return self._render_class8_keyword_research_test_output(skill_text, sample_input)
+        if skill_id == "class8/seo-audit-skill":
+            return self._render_class8_audit_test_output(skill_text, sample_input)
+        if skill_id == "class8/seo-brief-skill":
+            return self._render_class8_brief_test_output(skill_text, sample_input)
+        if skill_id == "class8/seo-article-writer-skill":
+            return self._render_class8_article_test_output(skill_text, sample_input)
         lead = self._parse_student_lead_input(sample_input)
         style = self._infer_student_skill_style(skill_text)
         score, score_reason = self._score_student_lead(lead)
@@ -936,7 +1264,7 @@ Send the follow-up email, then update the CRM after the student receives a reply
             self._send_json(400, {"ok": False, "error": "sample_input_required"})
             return
         skill_text = path.read_text(encoding="utf-8")
-        result = self._render_student_skill_test_output(skill_text, sample_input)
+        result = self._render_student_skill_test_output(skill_id, skill_text, sample_input)
         self._send_json(200, {"ok": True, "skill": self._student_skill_summary(user, skill_id, path), "result": result})
 
     def _handle_student_skill_diff(self) -> None:
@@ -981,6 +1309,12 @@ Send the follow-up email, then update the CRM after the student receives a reply
             self._proxy_wiki()
         elif path == "/api/admin/crm":
             self._handle_admin_crm()
+        elif path == "/api/mobile/me":
+            self._handle_mobile_me()
+        elif path == "/api/mobile/crm-summary":
+            self._handle_mobile_crm_summary()
+        elif path == "/api/mobile/skills":
+            self._handle_mobile_skills_list()
         elif path == "/api/skills":
             self._handle_skills_list()
         elif path == "/api/skills/file":
@@ -1012,10 +1346,14 @@ Send the follow-up email, then update the CRM after the student receives a reply
             self._proxy_wiki()
         elif path == "/auth/login":
             self._handle_login()
+        elif path == "/api/mobile/auth/login":
+            self._handle_mobile_login()
         elif path == "/auth/change-password":
             self._handle_change_password()
         elif path == "/auth/logout":
             self._handle_logout()
+        elif path == "/api/mobile/auth/logout":
+            self._handle_mobile_logout()
         elif path == "/admin/upload":
             self._handle_upload()
         elif path == "/api/share/upload":

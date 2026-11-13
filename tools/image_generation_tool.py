@@ -242,11 +242,11 @@ FAL_MODELS: Dict[str, Dict[str, Any]] = {
         },
         "upscale": False,
     },
-    "fal-ai/recraft/v4/pro/text-to-image": {
-        "display": "Recraft V4 Pro",
+    "fal-ai/recraft/v4.1/text-to-image": {
+        "display": "Recraft V4.1 standard",
         "speed": "~8s",
-        "strengths": "Design, brand systems, production-ready",
-        "price": "$0.25/image",
+        "strengths": "Sharper prompt control, cleaner composition",
+        "price": "$0.04/image",
         "size_style": "image_size_preset",
         "sizes": {
             "landscape": "landscape_16_9",
@@ -254,8 +254,9 @@ FAL_MODELS: Dict[str, Dict[str, Any]] = {
             "portrait": "portrait_16_9",
         },
         "defaults": {
-            # V4 Pro dropped V3's required `style` enum — defaults handle taste now.
-            "enable_safety_checker": False,
+            # V4.1 continues the V4 API shape — no required `style` enum.
+            # Match the model's documented default safety behavior.
+            "enable_safety_checker": True,
         },
         "supports": {
             "prompt", "image_size", "enable_safety_checker",

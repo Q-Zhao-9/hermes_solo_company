@@ -1,6 +1,6 @@
 ---
 title: Image Generation
-description: Generate images via FAL.ai — 9 models including FLUX 2, GPT Image (1.5 & 2), Nano Banana Pro, Ideogram, Recraft V4 Pro, and more, selectable via `hermes tools`.
+description: Generate images via FAL.ai — 9 models including FLUX 2, GPT Image (1.5 & 2), Nano Banana Pro, Ideogram, Recraft V4.1 standard, and more, selectable via `hermes tools`.
 sidebar_label: Image Generation
 sidebar_position: 6
 ---
@@ -20,7 +20,7 @@ Hermes Agent generates images from text prompts via FAL.ai. Nine models are supp
 | `fal-ai/gpt-image-1.5` | ~15s | Prompt adherence | $0.034/image |
 | `fal-ai/gpt-image-2` | ~20s | SOTA text rendering + CJK, world-aware photorealism | $0.04–0.06/image |
 | `fal-ai/ideogram/v3` | ~5s | Best typography | $0.03–0.09/image |
-| `fal-ai/recraft/v4/pro/text-to-image` | ~8s | Design, brand systems, production-ready | $0.25/image |
+| `fal-ai/recraft/v4.1/text-to-image` | ~8s | Sharper prompt control, cleaner composition | $0.04/image |
 | `fal-ai/qwen-image` | ~12s | LLM-based, complex text | $0.02/MP |
 
 Prices are FAL's pricing at time of writing; check [fal.ai](https://fal.ai/) for current numbers.
@@ -66,7 +66,7 @@ image_gen:
 
 ### GPT-Image Quality
 
-The `fal-ai/gpt-image-1.5` and `fal-ai/gpt-image-2` request quality is pinned to `medium` (~$0.034–$0.06/image at 1024×1024). We don't expose the `low` / `high` tiers as a user-facing option so that Nous Portal billing stays predictable across all users — the cost spread between tiers is 3–22×. If you want a cheaper option, pick Klein 9B or Z-Image Turbo; if you want higher quality, use Nano Banana Pro or Recraft V4 Pro.
+The `fal-ai/gpt-image-1.5` and `fal-ai/gpt-image-2` request quality is pinned to `medium` (~$0.034–$0.06/image at 1024×1024). We don't expose the `low` / `high` tiers as a user-facing option so that Nous Portal billing stays predictable across all users — the cost spread between tiers is 3–22×. If you want a cheaper option, pick Klein 9B, Z-Image Turbo, or Recraft V4.1 standard; if you want higher quality, use Nano Banana Pro.
 
 ## Usage
 
